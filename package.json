@@ -1,0 +1,17 @@
+{
+  "name": "penguinhq",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PenguinHQ — an interactive AI operating system where AI agents live in a virtual office",
+  "scripts": {
+    "dev:web": "pnpm --filter @penguinhq/web dev",
+    "dev:api": "cd apps/api && uvicorn app.main:app --reload --port 8000",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

@@ -1,0 +1,25 @@
+# Development image: `next dev` with hot reload. Source is bind-mounted
+# over this in docker-compose.yml; the COPY here makes the image usable
+# standalone too.
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json ./
+# `npm install` here always pulls down every @next/swc-* optional platform
+# binary (npm's musl detection for optionalDependencies isn't reliable), and
+# the linux-*-gnu ones are broken in this environment: Next's dev server
+# loading @next/swc-linux-arm64-gnu segfaults with an uncatchable native Bus
+# error (no JS exception — the process just dies) instead of falling back to
+# the working musl build. Delete the non-alpine binaries so Next can only
+# find the musl one it actually needs.
+RUN npm install \
+    && rm -rf node_modules/@next/swc-linux-*-gnu \
+              node_modules/@next/swc-darwin-* \
+              node_modules/@next/swc-win32-*
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]

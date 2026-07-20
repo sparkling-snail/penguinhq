@@ -1,0 +1,103 @@
+# ---------------------------------------------------------------------------
+# PenguinHQ — local development stack
+#
+# Every service is wired for hot reload:
+#   - api  (FastAPI/uvicorn --reload) mounts ./apps/api into the container
+#   - web  (Next.js dev server)       mounts ./apps/web into the container
+#
+# This file is the ONLY thing a new contributor needs to run the whole
+# platform locally: `docker compose up --build`
+# ---------------------------------------------------------------------------
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: penguinhq-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-penguin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-penguin}
+      POSTGRES_DB: ${POSTGRES_DB:-penguinhq}
+    ports:
+      - "5432:5432"
+    volumes:
+      - penguinhq_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-penguin}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - penguinhq
+
+  redis:
+    image: redis:7-alpine
+    container_name: penguinhq-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - penguinhq
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.dev
+    container_name: penguinhq-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-penguin}:${POSTGRES_PASSWORD:-penguin}@postgres:5432/${POSTGRES_DB:-penguinhq}
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: http://localhost:3000
+    volumes:
+      - ./apps/api:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - penguinhq
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    container_name: penguinhq-web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws
+      WATCHPACK_POLLING: "true" # reliable hot reload inside Docker
+    # Next.js dev's CLI puts stdin in raw mode to listen for hotkeys
+    # (o/h/w/d...). Without a real tty, stdin hits EOF immediately and
+    # next dev reads that as "detach" and exits 0, crash-looping the
+    # container. Allocating a pty keeps stdin open.
+    tty: true
+    stdin_open: true
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - penguinhq
+
+networks:
+  penguinhq:
+    driver: bridge
+
+volumes:
+  penguinhq_postgres_data:

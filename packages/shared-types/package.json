@@ -1,0 +1,8 @@
+{
+  "name": "@penguinhq/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared TypeScript contracts between PenguinHQ frontend and backend event schemas",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}

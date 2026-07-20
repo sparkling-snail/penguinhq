@@ -1,0 +1,27 @@
+# Node
+node_modules/
+.next/
+out/
+npm-debug.log*
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+
+# Docker
+postgres-data/
+
+# IDE
+.vscode/
+.idea/
