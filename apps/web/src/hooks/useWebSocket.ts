@@ -6,6 +6,7 @@ import { useGameStore } from "@/stores/gameStore";
 import { useChatStore } from "@/stores/chatStore";
 import type { PigeonPayload } from "@/types/events";
 import type { ChatMessage } from "@/types/chat";
+import type { Agent } from "@/types/agent";
 
 /**
  * Mounts the shared WebSocket connection and fans incoming events out to
@@ -18,6 +19,7 @@ import type { ChatMessage } from "@/types/chat";
 export function useWebSocket(): void {
   const addPigeon = useGameStore((s) => s.addPigeon);
   const removePigeon = useGameStore((s) => s.removePigeon);
+  const upsertAgent = useGameStore((s) => s.upsertAgent);
   const addMessage = useChatStore((s) => s.addMessage);
 
   useEffect(() => {
@@ -32,6 +34,10 @@ export function useWebSocket(): void {
           // Pigeons are a placeholder animation for now — auto-clear
           // after a flight duration so the list doesn't grow forever.
           setTimeout(() => removePigeon(payload.task_id), 8000);
+          break;
+        }
+        case "agent.state_changed": {
+          upsertAgent(event.payload as Agent);
           break;
         }
         case "chat.message": {
@@ -51,5 +57,5 @@ export function useWebSocket(): void {
       unsubscribe();
       socket.disconnect();
     };
-  }, [addPigeon, removePigeon, addMessage]);
+  }, [addPigeon, removePigeon, upsertAgent, addMessage]);
 }

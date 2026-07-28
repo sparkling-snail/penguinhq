@@ -1,7 +1,7 @@
 """
 Dev-only seed data.
 
-Inserts the six named agents from the product spec exactly once (idempotent
+Inserts the four named agents from the product spec exactly once (idempotent
 — checks count first). This lets `/agents` and, later, the frontend roster
 return something meaningful without a real agent-provisioning flow, which
 doesn't exist yet.
@@ -15,10 +15,8 @@ from app.domain.models.agent import Agent
 _SEED_AGENTS = [
     {"name": "Job Hunter", "role": "job_hunter", "room": "engineering", "avatar_color": "#F97316"},
     {"name": "Leetcode Coach", "role": "leetcode_coach", "room": "library", "avatar_color": "#8B5CF6"},
-    {"name": "Office Assistant", "role": "office_assistant", "room": "hr", "avatar_color": "#22C55E"},
     {"name": "Tech Scout", "role": "tech_scout", "room": "research_lab", "avatar_color": "#EAB308"},
     {"name": "Portfolio Penguin", "role": "portfolio", "room": "launch_pad", "avatar_color": "#EC4899"},
-    {"name": "Finance Penguin", "role": "finance", "room": "trading_desk", "avatar_color": "#06B6D4"},
 ]
 
 

@@ -4,14 +4,15 @@ import type { PigeonPayload } from "@/types/events";
 
 /**
  * Single source of truth for "what's happening in the world" — read by
- * React (HUD, agent inspector panel) and written to by both the PixiJS
- * layer (player position) and the WebSocket layer (agent state, pigeons).
+ * React (HUD, agent inspector panel) and written to by the WebSocket
+ * layer (agent state, pigeons).
  *
- * PixiJS itself does NOT read from this store on every frame — that would
- * mean a store update forces a Pixi re-render loop dependency. Instead,
- * Pixi entities hold their own authoritative transform and only *push*
- * snapshots into this store for React to read (e.g. for the side panel).
- * See components/game/entities/PlayerController.ts.
+ * The game loop in GameCanvas does NOT read player/NPC position from this
+ * store on every frame — that would force a React state update every
+ * animation frame. Position lives in refs local to GameCanvas and is
+ * pushed straight to the DOM via CharacterHandle; this store only carries
+ * things React actually needs to re-render for (pigeons in flight, the
+ * agent roster for the side panel).
  */
 
 export interface PigeonInFlight extends PigeonPayload {

@@ -68,6 +68,24 @@ services:
     networks:
       - penguinhq
 
+  leetcode-coach:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.dev
+    container_name: penguinhq-leetcode-coach
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PENGUINHQ_API_BASE: http://api:8000
+    command: ["python", "-m", "app.autonomous.leetcode_coach"]
+    volumes:
+      - ./apps/api:/app
+    depends_on:
+      - api
+    networks:
+      - penguinhq
+
   web:
     build:
       context: ./apps/web

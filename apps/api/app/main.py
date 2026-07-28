@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import agents, health, websocket
+from app.api.routes import agents, chat, health, hooks, memory, websocket
 from app.core.config import get_settings
 from app.core.database import init_db
 from app.seed import seed_agents_if_empty
@@ -57,6 +57,9 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(agents.router)
+app.include_router(hooks.router)
+app.include_router(chat.router)
+app.include_router(memory.router)
 app.include_router(websocket.router)
 
 
