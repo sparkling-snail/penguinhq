@@ -3,22 +3,25 @@ FastAPI application entrypoint.
 
 Responsibilities kept deliberately narrow: create the app, wire
 middleware, mount routers, and manage process-lifetime background tasks
-(DB init, seed data, the pigeon simulator). Business logic never lives
-here — it lives in app/domain and app/api/routes.
+(DB init, seed data). Business logic never lives here — it lives in
+app/domain and app/api/routes.
+
+Note: the pigeon simulator has been replaced by real inter-agent task
+dispatch (see app/api/routes/tasks.py). Pigeons now fly when agents
+dispatch tasks to each other, not on a fake timer.
 """
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import agents, chat, health, hooks, memory, websocket
+from app.api.routes import agents, chat, health, hooks, memory, tasks, websocket
 from app.core.config import get_settings
 from app.core.database import init_db
+from app.domain.models.task import Task  # noqa: F401 — ensure table is created by init_db
 from app.seed import seed_agents_if_empty
-from app.ws.pigeon_simulator import run_pigeon_simulator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("penguinhq")
@@ -31,12 +34,9 @@ async def lifespan(app: FastAPI):
     logger.info("PenguinHQ API starting up (env=%s)", settings.environment)
     await init_db()
     await seed_agents_if_empty()
-
-    simulator_task = asyncio.create_task(run_pigeon_simulator())
     try:
         yield
     finally:
-        simulator_task.cancel()
         logger.info("PenguinHQ API shutting down")
 
 
@@ -60,6 +60,7 @@ app.include_router(agents.router)
 app.include_router(hooks.router)
 app.include_router(chat.router)
 app.include_router(memory.router)
+app.include_router(tasks.router)
 app.include_router(websocket.router)
 
 

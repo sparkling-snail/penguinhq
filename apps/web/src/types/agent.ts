@@ -23,7 +23,11 @@ export type AgentState =
   | "waiting"
   | "sleeping"
   | "debugging"
-  | "error";
+  | "error"
+  // New states for the multi-agent framework
+  | "searching"
+  | "evaluating"
+  | "coordinating";
 
 export type RoomId =
   | "engineering"

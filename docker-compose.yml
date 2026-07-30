@@ -68,17 +68,19 @@ services:
     networks:
       - penguinhq
 
-  leetcode-coach:
+  agent-runner:
     build:
       context: ./apps/api
       dockerfile: Dockerfile.dev
-    container_name: penguinhq-leetcode-coach
+    container_name: penguinhq-agent-runner
     restart: unless-stopped
     env_file:
       - .env
     environment:
       PENGUINHQ_API_BASE: http://api:8000
-    command: ["python", "-m", "app.autonomous.leetcode_coach"]
+      PENGUINHQ_WS_BASE: ws://api:8000/ws
+      REDIS_URL: redis://redis:6379/0
+    command: ["python", "-m", "app.autonomous"]
     volumes:
       - ./apps/api:/app
     depends_on:

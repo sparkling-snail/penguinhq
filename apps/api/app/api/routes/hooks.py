@@ -3,15 +3,15 @@ Ingest endpoint for Claude Code hook events.
 
 Claude Code invokes `hooks/agent-tracker.sh` (repo root) on
 PreToolUse/PostToolUse/Stop/UserPromptSubmit, which POSTs the raw hook
-JSON here. This is the real event-driven path `pigeon_simulator.py`'s
-docstring already anticipated for pigeons — this is the same idea for
-agent *state*: map what a tool call implies about what the agent is doing
-and broadcast it over the existing WebSocket, no new transport needed.
+JSON here. This is the real event-driven path for agent *state*: map what
+a tool call implies about what the agent is doing and broadcast it over
+the existing WebSocket, no new transport needed.
 
-There's no notion of a "Claude Code session" in the Agent model, so a
-session is assigned to one of the existing agents round-robin, in-memory,
-the first time it's seen — process-local and reset on restart, the same
-tradeoff pigeon_simulator.py's in-memory state already makes.
+Sessions are assigned round-robin to agents that are NOT running
+autonomously (i.e. agents whose role is NOT in AUTONOMOUS_ROLES). This
+fixes the collision bug documented in ARCHITECTURE.md where hook-driven
+state changes would flicker against the autonomous agent's own state
+updates.
 """
 
 import logging
@@ -49,15 +49,25 @@ _TOOL_TO_STATE = {
 
 _session_agents: dict[str, str] = {}
 
+# Roles that run autonomously in the agent-runner container.
+# These are EXCLUDED from the hooks round-robin to prevent state collisions.
+AUTONOMOUS_ROLES = {"job_hunter", "leetcode_coach", "tech_scout", "portfolio"}
+
 
 async def _agent_for_session(db: AsyncSession, session_id: str) -> Agent | None:
+    """Resolve a Claude Code session to an agent, excluding autonomous ones."""
     agent_id = _session_agents.get(session_id)
     if agent_id is None:
         result = await db.execute(select(Agent).order_by(Agent.created_at))
-        agents = result.scalars().all()
-        if not agents:
+        all_agents = result.scalars().all()
+        # Filter out autonomous agents — they manage their own state
+        eligible = [a for a in all_agents if a.role not in AUTONOMOUS_ROLES]
+        if not eligible:
+            # Fallback: if no non-autonomous agents exist, use all agents
+            eligible = list(all_agents)
+        if not eligible:
             return None
-        agent = agents[len(_session_agents) % len(agents)]
+        agent = eligible[len(_session_agents) % len(eligible)]
         _session_agents[session_id] = agent.id
         return agent
 

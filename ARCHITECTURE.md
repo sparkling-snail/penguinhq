@@ -6,61 +6,95 @@
 postgres ── redis
    │
    ├── api (FastAPI, port 8000)
-   │     - REST: /agents, /agents/{id}/state, /agents/{id}/memory, /hooks/event, /chat/send
+   │     - REST: /agents, /agents/{id}/state, /agents/{id}/memory, /hooks/event, /chat/send, /tasks
    │     - WebSocket: /ws/{client_id} — the one real-time fan-out point everything broadcasts through
-   │     - in-memory ConnectionManager (ws connections) + pigeon_simulator (still fake/timer-based)
+   │     - in-memory ConnectionManager (ws connections)
+   │     - Pigeon simulator REMOVED — pigeons are now real inter-agent task dispatch events
    │
-   ├── leetcode-coach (Python, no exposed port)
-   │     - the one genuinely autonomous agent — own process, own loop, calls Anthropic directly
-   │     - talks to `api` only over HTTP/WS, same as any other client would
+   ├── agent-runner (Python, no exposed port)
+   │     - ALL 4 autonomous agents in one process, each as an asyncio.Task
+   │     - BaseAgent subclasses: JobHunterAgent, LeetcodeCoachAgent, TechScoutAgent, PortfolioPenguinAgent
+   │     - AgentBus: in-process asyncio.Queue router for zero-latency inter-agent messaging
+   │     - Shared httpx.AsyncClient + AsyncAnthropic + WebSocket listeners
+   │     - Talks to `api` over HTTP/WS, same as any other client would
    │
    └── web (Next.js, port 3000)
          - DOM/CSS game renderer (Character.tsx, GameCanvas.tsx) — no canvas/PixiJS
          - useWebSocket.ts fans server events into gameStore/chatStore
+         - Handles both pigeon.dispatched and pigeon.delivered events
 ```
 
-## Data flow — three separate ways an agent's state/chat changes
+## Data flow — how agents change state and communicate
 
 ```
 1. A CLAUDE CODE SESSION (a human driving Claude Code in this repo)
    Claude Code tool call → hooks/agent-tracker.sh → POST /hooks/event
-     → round-robins this session to one of the 4 seeded agents
+     → round-robins session to a NON-autonomous agent (hook round-robin excludes autonomous agents)
      → updates Agent.state in Postgres → broadcast agent.state_changed
      → frontend ring color changes
 
-2. THE AUTONOMOUS LOOP (leetcode-coach container)
-   every 120s (or on human interrupt):
-     invent problem → POST /agents/{id}/state ┐
-     solve it        → POST /agents/{id}/state ├─ each also POST /agents/{id}/memory
-     critique it      → POST /agents/{id}/state ┘   (durable, Postgres — survives restarts)
-     each step also → POST /chat/send → broadcast chat.message
-     Anthropic API called directly (api.anthropic.com), no human per-turn
+2. AUTONOMOUS AGENT LOOPS (agent-runner container)
+   Each agent runs its own asyncio loop with configurable cycle interval:
+     Job Hunter (180s): generate listing → evaluate fit → dispatch job_lead to Portfolio
+     Leetcode Coach (120s): invent problem → solve → critique
+     Tech Scout (240s): pick tech topic → research → summarize
+     Portfolio Penguin (300s): review pipeline → summarize
+   Each step: POST /agents/{id}/state + POST /agents/{id}/memory + POST /chat/send
 
-3. A HUMAN CHATTING BACK (in the #logs channel)
+3. INTER-AGENT TASK DISPATCH (real pigeons!)
+   Job Hunter finds a lead → dispatch_task("portfolio", "job_lead", {...])
+     → POST /tasks (creates DB row, broadcasts pigeon.dispatched over WS → pigeon flies!)
+     → AgentBus delivers to Portfolio Penguin's inbox (instant, zero-latency)
+     → Portfolio processes the lead → PATCH /tasks/{id} (broadcasts pigeon.delivered → pigeon arrives!)
+
+4. HUMAN CHATTING (in any agent's channel)
    browser → chat.message (authorId: "human") → broadcast
-     → leetcode-coach's own WS listener picks it up
-     → GET /agents/{id}/memory (last 16 entries) → real multi-turn Claude call
+     → agent's WS listener picks it up → multi-turn Claude call with memory context
      → reply → POST /chat/send + POST /memory
+```
+
+## Agent framework
+
+```
+app/autonomous/
+├── __init__.py          # Package exports: BaseAgent, AgentBus, AgentMessage
+├── __main__.py          # Entrypoint: python -m app.autonomous
+├── base.py              # BaseAgent abstract class — lifecycle, LLM, memory, dispatch
+├── bus.py               # AgentBus — in-process asyncio.Queue message router
+├── runtime.py           # AgentRuntime — discovers, instantiates, runs all agents
+├── agents/
+│   ├── __init__.py
+│   ├── job_hunter.py    # JobHunterAgent — searches jobs, dispatches leads
+│   ├── leetcode_coach.py # LeetcodeCoachAgent — practice problems
+│   ├── tech_scout.py    # TechScoutAgent — tech trend research
+│   └── portfolio_penguin.py # PortfolioPenguinAgent — tracks applications
+└── leetcode_coach.py    # DEPRECATED — original standalone agent, kept for reference
 ```
 
 ## Database
 
 - **`agents`** — the 4 seeded rows (Job Hunter, Leetcode Coach, Tech Scout, Portfolio Penguin): id, name, role, state, room, position, avatar_color
-- **`agent_memory`** — agent_id, role (user/assistant), content, created_at. Only Leetcode Coach writes to this today.
+- **`agent_memory`** — agent_id, role (user/assistant), content, created_at. All agents write to this.
+- **`tasks`** — id, source_agent_id, destination_agent_id, destination_role, task_type, priority, status, payload (JSONB), result (JSONB), created_at, completed_at. This is the DB-backed pigeon ledger.
 
 ## Frontend
 
-`GameCanvas.tsx` runs a `requestAnimationFrame` loop driving position/pose for the player + every agent in `gameStore.agents` (fetched via `useAgents`, kept live via `useWebSocket`). Ring color comes straight from `agent.state` — the same rendering path regardless of which of the three mechanisms above changed that state.
+`GameCanvas.tsx` runs a `requestAnimationFrame` loop driving position/pose for the player + every agent in `gameStore.agents` (fetched via `useAgents`, kept live via `useWebSocket`). Ring color comes straight from `agent.state` — the same rendering path regardless of which mechanism changed that state.
+
+New agent states and ring colors:
+- `searching` — blue (#3b82f6) — Job Hunter looking for listings
+- `evaluating` — amber (#f59e0b) — Job Hunter assessing fit
+- `coordinating` — pink (#ec4899) — Portfolio Penguin processing a lead
+
+Pigeon events:
+- `pigeon.dispatched` — triggered by POST /tasks (a task is created, pigeon flies across screen)
+- `pigeon.delivered` — triggered by PATCH /tasks/{id} with status=completed (pigeon arrives, removed from screen)
 
 Sprites:
 - Player: single static image (`penguin-blue.webp`), flipped horizontally to face left/right.
-- The 4 named agents (Bluey/Kip/Luna/Ziggy): 4-directional image sets (`front-left`/`front-right`/`rear-left`/`rear-right`), swapped based on movement direction rather than flipped.
-- Pigeons: Web Animations API for flight paths, not a per-frame game-loop update — a fixed path from spawn is a better fit for `element.animate()` than hand-rolled position updates.
+- The 4 named agents (Bluey/Kip/Luna/Ziggy): 4-directional image sets, swapped based on movement direction.
+- Pigeons: Web Animations API for flight paths.
 
-## Known rough edge
+## Hooks collision fix
 
-**Mechanisms 1 and 2 can collide on the same agent.** Hook-based round-robin (mechanism 1) assigns Claude Code sessions to agents by rotation, with no awareness that Leetcode Coach already has its own autonomous loop running. If a new Claude Code session round-robins onto Leetcode Coach's row, tool-call-driven state changes and the autonomous cycle's own state changes both write to the same row — expect incoherent flicker between "debugging" (from Claude Code activity) and "coding" (from its own practice cycle). Not yet fixed: the straightforward fix is excluding Leetcode Coach from the hooks round-robin pool.
-
-## What's genuinely autonomous vs. reactive
-
-Only **Leetcode Coach** runs unprompted, on its own timer, making its own decisions about what to do next. The other three agents (Job Hunter, Tech Scout, Portfolio Penguin) are purely reactive — their state only changes when hook events from a human-driven Claude Code session happen to round-robin onto them. None of the 4 are "AI agents" that pursue their named role (Job Hunter doesn't hunt jobs); they're character labels a real process gets assigned to for visualization purposes.
+Hook-based round-robin (mechanism 1) now **excludes** agents whose role is in `AUTONOMOUS_ROLES` (job_hunter, leetcode_coach, tech_scout, portfolio). This prevents the state collision documented in the original ARCHITECTURE.md where hook-driven and autonomous state changes would flicker on the same agent row.

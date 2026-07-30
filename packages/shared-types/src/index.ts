@@ -20,7 +20,10 @@ export type AgentState =
   | "waiting"
   | "sleeping"
   | "debugging"
-  | "error";
+  | "error"
+  | "searching"
+  | "evaluating"
+  | "coordinating";
 
 export type RoomId =
   | "engineering"

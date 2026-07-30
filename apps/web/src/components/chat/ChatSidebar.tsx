@@ -5,17 +5,21 @@ import { MessageList } from "./MessageList";
 import { MessageComposer } from "./MessageComposer";
 import { useChatStore } from "@/stores/chatStore";
 
+interface ChatSidebarProps {
+  width?: number;
+}
+
 /**
  * The Slack-like communication center — composed from three small
  * pieces (channel list, message list, composer) rather than one big
  * component, so each can grow independently as real backend events
  * start flowing through the communication-center milestone.
  */
-export function ChatSidebar() {
+export function ChatSidebar({ width = 320 }: ChatSidebarProps) {
   const activeChannelId = useChatStore((s) => s.activeChannelId);
 
   return (
-    <aside className="glass-panel flex h-full w-80 shrink-0 flex-col">
+    <aside className="glass-panel flex h-full shrink-0 flex-col" style={{ width }}>
       <div className="flex items-center justify-between border-b border-penguin-border px-3 py-2.5">
         <span className="text-sm font-semibold text-slate-100">PenguinHQ</span>
         <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">

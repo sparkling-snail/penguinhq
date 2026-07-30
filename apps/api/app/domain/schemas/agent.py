@@ -27,6 +27,10 @@ class AgentState(str, Enum):
     SLEEPING = "sleeping"
     DEBUGGING = "debugging"
     ERROR = "error"
+    # New states for the multi-agent framework
+    SEARCHING = "searching"
+    EVALUATING = "evaluating"
+    COORDINATING = "coordinating"
 
 
 RoomId = Literal[

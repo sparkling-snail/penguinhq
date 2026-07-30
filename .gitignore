@@ -25,3 +25,4 @@ postgres-data/
 # IDE
 .vscode/
 .idea/
+specs/doc_export/

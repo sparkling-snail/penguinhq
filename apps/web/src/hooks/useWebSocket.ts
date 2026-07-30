@@ -31,9 +31,14 @@ export function useWebSocket(): void {
         case "pigeon.dispatched": {
           const payload = event.payload as PigeonPayload;
           addPigeon(payload);
-          // Pigeons are a placeholder animation for now — auto-clear
-          // after a flight duration so the list doesn't grow forever.
+          // Pigeons auto-clear after flight duration so the list doesn't grow forever.
           setTimeout(() => removePigeon(payload.task_id), 8000);
+          break;
+        }
+        case "pigeon.delivered": {
+          // A task was completed — remove the pigeon immediately (it arrived!)
+          const payload = event.payload as PigeonPayload;
+          removePigeon(payload.task_id);
           break;
         }
         case "agent.state_changed": {

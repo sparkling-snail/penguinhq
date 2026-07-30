@@ -10,13 +10,9 @@ import type { ChatChannel, ChatMessage } from "@/types/chat";
  */
 
 export const CHANNELS: ChatChannel[] = [
-  { id: "general", label: "general", description: "Company-wide updates" },
-  { id: "jobs", label: "jobs", description: "Job Hunter Penguin's findings" },
-  { id: "engineering", label: "engineering", description: "Build + deploy chatter" },
+  { id: "jobs", label: "jobs", description: "Job Hunter & Portfolio Penguin" },
   { id: "research", label: "research", description: "Tech Scout's research drops" },
-  { id: "alerts", label: "alerts", description: "Incidents and warnings" },
-  { id: "deployments", label: "deployments", description: "Release activity" },
-  { id: "logs", label: "logs", description: "Raw agent activity log" },
+  { id: "logs", label: "logs", description: "Leetcode Coach activity" },
   { id: "human", label: "human", description: "Direct line to you" },
 ];
 

@@ -29,6 +29,10 @@ const STATE_RING_COLOR: Record<AgentState, string> = {
   sleeping: "#475569",
   debugging: "#f97316",
   error: "#dc2626",
+  // New states for the multi-agent framework
+  searching: "#3b82f6",
+  evaluating: "#f59e0b",
+  coordinating: "#ec4899",
 };
 
 const SPRITE_HEIGHT = 74;
