@@ -37,19 +37,27 @@ class TechScoutAgent(BaseAgent):
             "that a software engineer should know about in 2025-2026. Just name the topic, "
             "nothing else. Vary the topic each time — don't repeat recent picks."
         )
+        # The model sometimes wraps its answer in **bold** despite "just name the
+        # topic" — strip it here since this string gets wrapped in ** again below;
+        # left alone, that produces broken nested asterisks like ****topic****.
+        topic = topic.strip().strip("*").strip()
         if topic:
-            await self.announce(f"🔭 Researching: {topic}")
+            await self.announce(f"🔭 Researching: **{topic}**")
 
         # Step 2: Produce a tech brief
         await self.set_state("researching")
         brief = await self.ask_llm(
-            f"Write a concise tech brief on '{topic}'. Include: "
-            f"1) What it is (1 sentence), 2) Why it matters now (1-2 sentences), "
-            f"3) Key trade-offs vs. alternatives (2-3 sentences), "
-            f"4) Verdict: worth adopting? (1 sentence)"
+            f"Write a concise tech brief on '{topic}'. Reply in EXACTLY this format, "
+            f"one section per line, each starting with the bold label shown (double "
+            f"asterisks) followed by your answer on the same line — no extra headers, "
+            f"no preamble, no markdown besides the bold labels:\n\n"
+            f"**What it is:** <1 sentence>\n"
+            f"**Why it matters:** <1-2 sentences>\n"
+            f"**Trade-offs:** <2-3 sentences comparing it to alternatives>\n"
+            f"**Verdict:** <1 sentence — worth adopting?>"
         )
         if brief:
-            await self.announce(f"📋 Tech brief: {topic}\n{brief}")
+            await self.announce(f"📋 **Tech brief: {topic}**\n\n{brief}")
 
         # Step 3: If this is a major technology, nudge Job Hunter to check the job market
         if topic and any(
@@ -71,11 +79,16 @@ class TechScoutAgent(BaseAgent):
             await self.set_state("researching")
             topic = task.payload.get("topic", str(task.payload))
             result = await self.ask_llm(
-                f"Research this topic thoroughly and produce a concise brief: {topic}. "
-                f"Include what it is, why it matters, trade-offs, and a verdict."
+                f"Research this topic thoroughly. Reply in EXACTLY this format, one "
+                f"section per line, each starting with the bold label shown:\n\n"
+                f"**What it is:** <1 sentence>\n"
+                f"**Why it matters:** <1-2 sentences>\n"
+                f"**Trade-offs:** <2-3 sentences>\n"
+                f"**Verdict:** <1 sentence>\n\n"
+                f"Topic: {topic}"
             )
             if result:
-                await self.announce(f"🔬 Research result: {topic}\n{result}")
+                await self.announce(f"🔬 **Research: {topic}**\n\n{result}")
             await self.complete_task(task.task_id, {"result": result})
             await self.set_state("idle")
         else:
