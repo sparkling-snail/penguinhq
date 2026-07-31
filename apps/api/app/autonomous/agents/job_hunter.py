@@ -58,6 +58,14 @@ class JobHunterAgent(BaseAgent):
     cycle_seconds = 180
     chat_channel = "jobs"
     memory_limit = 16
+    fact_schema = [
+        "candidate_name",
+        "target_role",
+        "target_location",
+        "experience_level",
+        "key_skills",
+        "salary_expectation",
+    ]
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)

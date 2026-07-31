@@ -21,6 +21,7 @@ class LeetcodeCoachAgent(BaseAgent):
     cycle_seconds = 120
     chat_channel = "logs"
     memory_limit = 16
+    fact_schema = ["preferred_language", "skill_level", "weak_topics"]
 
     def system_prompt(self) -> str:
         return (

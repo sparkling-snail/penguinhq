@@ -21,6 +21,19 @@ class PortfolioPenguinAgent(BaseAgent):
     cycle_seconds = 300  # Less frequent — mostly reactive
     chat_channel = "jobs"
     memory_limit = 16
+    # Same schema as Job Hunter (both track the same candidate's job
+    # search) — but note: facts are stored per-agent-id, not shared, so
+    # Job Hunter learning "target_location" doesn't automatically inform
+    # Portfolio Penguin yet. Each has to be told independently until
+    # facts are keyed by candidate rather than by agent.
+    fact_schema = [
+        "candidate_name",
+        "target_role",
+        "target_location",
+        "experience_level",
+        "key_skills",
+        "salary_expectation",
+    ]
 
     def system_prompt(self) -> str:
         return (

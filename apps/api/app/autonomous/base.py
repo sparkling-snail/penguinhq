@@ -65,6 +65,16 @@ class BaseAgent(ABC):
     memory_limit: int = 16
     model: str = "claude-haiku-4-5-20251001"
 
+    # Fixed set of durable-fact keys this agent cares about (e.g.
+    # "target_role", "target_location" for Job Hunter). Empty means this
+    # agent doesn't do fact extraction at all. Deliberately a closed,
+    # per-agent schema rather than freeform key extraction — freeform
+    # extraction can name the same fact "job_search_focus" one time and
+    # "current_goal" the next, which makes facts impossible to reliably
+    # overwrite later. A fixed schema is also the only version of this
+    # that's actually testable against real conversations before trusting it.
+    fact_schema: list[str] = []
+
     @abstractmethod
     async def run_cycle(self) -> None:
         """One autonomous tick — the agent's core behavior."""
@@ -162,14 +172,88 @@ class BaseAgent(ABC):
         await self.post_chat(content, channel)
         await self.append_memory("assistant", content)
 
+    async def fetch_facts(self) -> dict[str, str]:
+        """Fetch this agent's durable fact profile (empty if none set)."""
+        try:
+            resp = await self._http.get(f"{self._api_base()}/agents/{self.id}/facts")
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            logger.exception("[%s] failed to fetch facts", self.role)
+            return {}
+
+    async def upsert_facts(self, facts: dict[str, str]) -> None:
+        """Persist facts (upsert by key) — durable, unaffected by memory's fetch window."""
+        try:
+            await self._http.post(
+                f"{self._api_base()}/agents/{self.id}/facts", json={"facts": facts}
+            )
+        except Exception:
+            logger.exception("[%s] failed to upsert facts", self.role)
+
+    async def _extract_facts(self, user_message: str, reply: str) -> None:
+        """After a chat exchange, pull out any of this agent's known
+        fact_schema keys the user stated or clearly implied, and persist
+        them. No-ops for agents with an empty fact_schema. Deliberately
+        instructed to omit (not guess) unmentioned fields — a fact store
+        that hallucinates is worse than no fact store."""
+        if not self.fact_schema:
+            return
+
+        schema_list = ", ".join(self.fact_schema)
+        extraction = await self.ask_llm(
+            f"User said: {user_message}\nAssistant replied: {reply}",
+            system=(
+                f"Extract ONLY these fields if the user clearly stated or strongly "
+                f"implied them: {schema_list}. Output one line per field found, "
+                f'formatted exactly as "key: value". Omit any field not mentioned '
+                f"entirely — do not write it as NONE, do not guess. If nothing "
+                f"qualifies, output nothing at all."
+            ),
+            max_tokens=200,
+        )
+
+        facts: dict[str, str] = {}
+        for line in extraction.splitlines():
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip()
+            if key in self.fact_schema and value and value.upper() != "NONE":
+                facts[key] = value
+
+        if facts:
+            logger.info("[%s] extracted facts: %s", self.role, facts)
+            await self.upsert_facts(facts)
+
     async def ask_llm(
         self,
         prompt: str,
         *,
         history: list[dict] | None = None,
         max_tokens: int = 600,
+        facts: dict[str, str] | None = None,
+        system: str | None = None,
+        web_search: bool = False,
     ) -> str:
-        """Single-shot or multi-turn LLM call with this agent's system prompt."""
+        """Single-shot or multi-turn LLM call. Uses this agent's own
+        system_prompt() unless `system` overrides it (used by fact
+        extraction, which needs a completely different instruction).
+        `facts` — if given — is appended to the system prompt so known
+        durable facts inform every reply, not just ones still inside the
+        memory window.
+
+        `web_search` — if True, grants Claude Anthropic's hosted web_search
+        tool for this call. It's a server-side tool: Anthropic runs the
+        search and folds results back into the same response, so no
+        client-side tool loop is needed here — the final text block already
+        reflects what it found."""
+        sys_prompt = system if system is not None else self.system_prompt()
+        if facts:
+            facts_block = "\n".join(f"- {k}: {v}" for k, v in facts.items())
+            sys_prompt = f"{sys_prompt}\n\nKnown facts about this user (use naturally, don't just recite them back):\n{facts_block}"
+
         messages: list[dict] = []
         if history:
             messages.extend(
@@ -178,13 +262,19 @@ class BaseAgent(ABC):
             )
         messages.append({"role": "user", "content": prompt})
 
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "system": sys_prompt,
+            "messages": messages,
+        }
+        if web_search:
+            kwargs["tools"] = [
+                {"type": "web_search_20250305", "name": "web_search", "max_uses": 1}
+            ]
+
         try:
-            response = await self._anthropic.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=self.system_prompt(),
-                messages=messages,
-            )
+            response = await self._anthropic.messages.create(**kwargs)
             return "".join(
                 block.text for block in response.content if block.type == "text"
             ).strip()
@@ -253,14 +343,22 @@ class BaseAgent(ABC):
     # --- Default human message handler ---
 
     async def respond_to_message(self, message: str) -> None:
-        """Handle a human chat message (interrupt). Default: multi-turn with memory."""
+        """Handle a human chat message (interrupt). Default: multi-turn with
+        memory + durable facts. Fact extraction runs *after* the reply is
+        sent, not before — it's a second LLM call, and the human shouldn't
+        wait longer for a reply just so facts can be updated in the
+        background."""
         await self.set_state("meeting")
         history = await self.fetch_memory()
-        reply = await self.ask_llm(message, history=history)
+        facts = await self.fetch_facts() if self.fact_schema else {}
+        reply = await self.ask_llm(message, history=history, facts=facts)
         if reply:
             await self.append_memory("user", message)
             await self.announce(reply)
         await self.set_state("idle")
+
+        if reply:
+            await self._extract_facts(message, reply)
 
     # --- Background listeners ---
 
