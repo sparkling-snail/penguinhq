@@ -1,12 +1,6 @@
 """
-Job Hunter — searches real job listings via The Muse's public API and
-dispatches leads to Portfolio Penguin.
-
-Not LinkedIn/Glassdoor: both explicitly prohibit automated scraping in
-their Terms of Service and actively detect/block it (LinkedIn has won
-lawsuits against scrapers; neither offers a public API an individual can
-sign up for). The Muse is a genuine public job-search API — no API key
-required at all, real listings from real companies.
+Job Hunter — collects public LinkedIn job listings, persists them, and
+dispatches promising leads to Portfolio Penguin.
 
 Autonomous cycle: fetch a real listing → evaluate fit → dispatch lead → idle.
 Posts to #jobs channel. Dispatches job_lead tasks to Portfolio Penguin.
@@ -15,17 +9,20 @@ Receives search_for_role tasks from other agents (e.g. Tech Scout) or humans.
 
 import logging
 import os
-import random
 import re
+from urllib.parse import quote_plus
+
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright
 
 from app.autonomous.base import BaseAgent
 from app.autonomous.bus import AgentMessage
 
 logger = logging.getLogger("penguinhq.agents.job_hunter")
 
-THE_MUSE_API = "https://www.themuse.com/api/public/jobs"
-THE_MUSE_CATEGORY = os.environ.get("THE_MUSE_CATEGORY", "Software Engineering")
-THE_MUSE_LOCATION = os.environ.get("THE_MUSE_LOCATION", "")  # optional, e.g. "New York, NY"
+LINKEDIN_KEYWORDS = os.environ.get("LINKEDIN_JOB_KEYWORDS", "Software Engineer")
+LINKEDIN_LOCATION = os.environ.get("LINKEDIN_JOB_LOCATION", "")
+LINKEDIN_MAX_LISTINGS = max(1, min(int(os.environ.get("LINKEDIN_MAX_LISTINGS", "10")), 25))
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -36,12 +33,11 @@ def _strip_html(html: str) -> str:
 
 
 def _format_listing(job: dict) -> str:
-    title = job.get("name", "Untitled role")
-    company = (job.get("company") or {}).get("name", "Unknown company")
-    locations = job.get("locations") or []
-    location = ", ".join(loc.get("name", "") for loc in locations) or "Unspecified location"
-    url = (job.get("refs") or {}).get("landing_page", "")
-    description = _strip_html(job.get("contents", ""))
+    title = job.get("title", "Untitled role")
+    company = job.get("company") or "Unknown company"
+    location = job.get("location") or "Unspecified location"
+    url = job.get("url", "")
+    description = _strip_html(job.get("description", ""))
     if len(description) > 400:
         description = description[:400] + "..."
 
@@ -51,6 +47,95 @@ def _format_listing(job: dict) -> str:
     if url:
         lines.append(f"\n🔗 {url}")
     return "\n".join(lines)
+
+
+class LinkedInJobCollector:
+    """Collect public listing pages without authentication or access-control bypasses."""
+
+    _skill_terms = (
+        "python", "typescript", "javascript", "react", "node.js", "java", "golang",
+        "rust", "aws", "azure", "gcp", "docker", "kubernetes", "sql", "postgresql",
+        "terraform", "machine learning", "llm",
+    )
+
+    @staticmethod
+    def _text(value: str | None) -> str:
+        return re.sub(r"\s+", " ", value or "").strip()
+
+    @staticmethod
+    def _source_id(url: str) -> str:
+        match = re.search(r"(?:currentJobId|jobId|view)/(\d+)", url)
+        return match.group(1) if match else url.rstrip("/").rsplit("/", 1)[-1]
+
+    async def _optional_text(self, page, selector: str) -> str:
+        try:
+            return self._text(await page.locator(selector).first.text_content(timeout=3_000))
+        except PlaywrightTimeoutError:
+            return ""
+
+    async def collect(self, keywords: str, location: str, limit: int) -> list[dict]:
+        search_url = (
+            "https://www.linkedin.com/jobs/search/?f_TPR=r604800"
+            f"&keywords={quote_plus(keywords)}&location={quote_plus(location)}"
+        )
+        try:
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(headless=True)
+                context = await browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                        "Chrome/122.0 Safari/537.36"
+                    )
+                )
+                page = await context.new_page()
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
+                await page.wait_for_timeout(750)
+                urls = await page.locator(
+                    "a.base-card__full-link, a[href*='/jobs/view/']"
+                ).evaluate_all("links => [...new Set(links.map(link => link.href))]")
+                listings: list[dict] = []
+                for url in urls[:limit]:
+                    listing = await self._extract(page, url)
+                    if listing:
+                        listings.append(listing)
+                await context.close()
+                await browser.close()
+                return listings
+        except PlaywrightTimeoutError:
+            logger.warning("[job_hunter] LinkedIn page timed out")
+        except Exception:
+            logger.exception("[job_hunter] LinkedIn collection failed")
+        return []
+
+    async def _extract(self, page, url: str) -> dict | None:
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            await page.wait_for_timeout(300)
+            title = self._text(await page.locator("h1").first.text_content(timeout=5_000))
+            if not title:
+                return None
+            company = await self._optional_text(page, ".topcard__org-name-link, .topcard__flavor--black-link")
+            location = await self._optional_text(page, ".topcard__flavor--bullet, .topcard__flavor--metadata")
+            description = await self._optional_text(page, ".show-more-less-html__markup, .description__text")
+            posted_date = await self._optional_text(page, ".posted-time-ago__text, time")
+            salary = await self._optional_text(page, ".compensation__salary, [class*='salary']")
+        except PlaywrightTimeoutError:
+            return None
+
+        lower_description = description.lower()
+        skills = [term for term in self._skill_terms if term in lower_description]
+        return {
+            "source": "linkedin",
+            "source_job_id": self._source_id(url),
+            "url": url,
+            "title": title,
+            "company": company or None,
+            "location": location or None,
+            "salary": salary or None,
+            "description": description or None,
+            "skills": skills,
+            "posted_date": posted_date or None,
+        }
 
 
 class JobHunterAgent(BaseAgent):
@@ -72,7 +157,8 @@ class JobHunterAgent(BaseAgent):
         # In-memory only — resets on restart. Good enough to avoid
         # announcing the same listing twice in a row; not meant as a
         # permanent dedupe ledger.
-        self._seen_job_ids: set[int] = set()
+        self._seen_job_ids: set[str] = set()
+        self._collector = LinkedInJobCollector()
 
     def system_prompt(self) -> str:
         return (
@@ -82,34 +168,23 @@ class JobHunterAgent(BaseAgent):
             "listing details are needed."
         )
 
-    async def _fetch_real_listing(
-        self, category: str | None = None, count: int = 1
-    ) -> list[dict]:
-        """Fetch real, not-yet-seen listings from The Muse's public API.
-        Returns an empty list on failure — callers must handle that
-        rather than falling back to inventing a listing."""
-        params = {
-            "category": category or THE_MUSE_CATEGORY,
-            "page": random.randint(0, 4),  # rotate so cycles don't repeat page 0 forever
-        }
-        if THE_MUSE_LOCATION:
-            params["location"] = THE_MUSE_LOCATION
-
-        try:
-            resp = await self._http.get(THE_MUSE_API, params=params, timeout=15.0)
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
-        except Exception:
-            logger.exception("[job_hunter] The Muse API call failed")
-            return []
-
-        fresh = [r for r in results if r.get("id") not in self._seen_job_ids]
-        pool = fresh or results
-        random.shuffle(pool)
-        picked = pool[:count]
+    async def _fetch_listings(self, keywords: str | None = None, count: int = 1) -> list[dict]:
+        """Collect, persist, and deduplicate current public LinkedIn listings."""
+        results = await self._collector.collect(
+            keywords or LINKEDIN_KEYWORDS, LINKEDIN_LOCATION, max(count, LINKEDIN_MAX_LISTINGS)
+        )
+        for job in results:
+            try:
+                response = await self._http.post(
+                    f"{self._api_base()}/jobs/ingest", json=job, timeout=15.0
+                )
+                response.raise_for_status()
+            except Exception:
+                logger.exception("[job_hunter] failed to persist LinkedIn listing")
+        fresh = [job for job in results if job["source_job_id"] not in self._seen_job_ids]
+        picked = (fresh or results)[:count]
         for job in picked:
-            if job.get("id"):
-                self._seen_job_ids.add(job["id"])
+            self._seen_job_ids.add(job["source_job_id"])
         if len(self._seen_job_ids) > 500:  # cap unbounded growth
             self._seen_job_ids = set(list(self._seen_job_ids)[-250:])
         return picked
@@ -117,11 +192,10 @@ class JobHunterAgent(BaseAgent):
     async def run_cycle(self) -> None:
         """Fetch a real job listing, evaluate it, dispatch leads."""
         await self.set_state("searching")
-        jobs = await self._fetch_real_listing()
+        jobs = await self._fetch_listings()
         if not jobs:
             await self.announce(
-                "⚠️ Couldn't fetch real listings this cycle (The Muse API may be "
-                "unreachable or rate-limited). Will retry next cycle."
+                "⚠️ Couldn't collect LinkedIn listings this cycle. Will retry next cycle."
             )
             await self.set_state("idle")
             return
@@ -156,7 +230,7 @@ class JobHunterAgent(BaseAgent):
                     "listing": listing,
                     "fit_score": fit_score,
                     "evaluation": evaluation,
-                    "url": (job.get("refs") or {}).get("landing_page", ""),
+                    "url": job.get("url", ""),
                 },
                 priority="high" if fit_score >= 8 else "normal",
             )
@@ -171,18 +245,11 @@ class JobHunterAgent(BaseAgent):
         if task.task_type == "search_for_role":
             await self.set_state("searching")
             criteria = task.payload.get("criteria", str(task.payload))
-            # The Muse's API filters by a fixed category taxonomy, not
-            # free-text keywords, so an arbitrary "criteria" string (e.g.
-            # from Tech Scout's "roles requiring Rust") can't be mapped
-            # precisely — fetch from the configured default category and
-            # say so, rather than silently pretending it was filtered.
-            jobs = await self._fetch_real_listing(count=3)
+            jobs = await self._fetch_listings(criteria, count=3)
             if jobs:
                 formatted = "\n\n".join(_format_listing(j) for j in jobs)
                 await self.announce(
-                    f"🎯 Requested search for '{criteria}' — The Muse doesn't support "
-                    f"free-text search, so here are current {THE_MUSE_CATEGORY} listings "
-                    f"instead:\n{formatted}"
+                    f"🎯 Requested LinkedIn search for '{criteria}':\n{formatted}"
                 )
                 result = formatted
             else:
