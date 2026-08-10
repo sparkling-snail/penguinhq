@@ -79,6 +79,11 @@ class ApifyMcpLinkedInJobCollector:
         "terraform", "machine learning", "llm",
     )
 
+    def __init__(self) -> None:
+        # Kept deliberately short and secret-free: this text is safe to show
+        # in chat when a real MCP call fails.
+        self.last_error: str | None = None
+
     @staticmethod
     def _text(value: str | None) -> str:
         return re.sub(r"\s+", " ", value or "").strip()
@@ -90,9 +95,11 @@ class ApifyMcpLinkedInJobCollector:
         limit: int,
         skip_job_ids: Iterable[str] = (),
     ) -> list[dict]:
+        self.last_error = None
         token = os.environ.get("APIFY_API_TOKEN")
         if not token:
-            logger.warning("[job_hunter] APIFY_API_TOKEN is not configured")
+            self.last_error = "APIFY_API_TOKEN is not configured"
+            logger.warning("[job_hunter] %s", self.last_error)
             return []
 
         payload: dict[str, object] = {
@@ -135,7 +142,13 @@ class ApifyMcpLinkedInJobCollector:
                                 arguments={"datasetId": dataset_id, "limit": limit},
                             )
                             items = self._job_items(output)
-        except Exception:
+        except Exception as exc:
+            detail = re.sub(r"apify_api_[A-Za-z0-9]+", "[redacted]", str(exc)).strip()
+            detail = detail.replace(token, "[redacted]")
+            # MCP errors may include an actor/billing status useful to the
+            # user. Keep it bounded and redact credentials before chat.
+            suffix = f": {detail[:240]}" if detail else f" ({type(exc).__name__})"
+            self.last_error = f"Apify MCP request failed{suffix}"
             logger.exception("[job_hunter] Apify MCP collection failed")
             return []
 
@@ -264,6 +277,7 @@ class JobHunterAgent(BaseAgent):
         self._collector = ApifyMcpLinkedInJobCollector()
         self._quota_exhausted_today = False
         self._quota_notice_day: str | None = None
+        self._last_collection_error: str | None = None
 
     def system_prompt(self) -> str:
         return (
@@ -276,6 +290,7 @@ class JobHunterAgent(BaseAgent):
 
     async def _fetch_listings(self, keywords: str | None = None, count: int = 1) -> list[dict]:
         """Collect, persist, and deduplicate listings from the configured Apify MCP actor."""
+        self._last_collection_error = None
         facts = await self.fetch_facts()
         today = date.today().isoformat()
         quota = self._read_daily_quota(facts.get(self._daily_quota_fact), today)
@@ -296,14 +311,16 @@ class JobHunterAgent(BaseAgent):
             skip_ids = self._seen_job_ids | {
                 job["source_job_id"] for job in results
             }
-            results.extend(
-                await self._collector.collect(
-                    search_term,
-                    facts.get("target_location") or LINKEDIN_LOCATION,
-                    per_search_limit,
-                    skip_ids,
-                )
+            collected = await self._collector.collect(
+                search_term,
+                facts.get("target_location") or LINKEDIN_LOCATION,
+                per_search_limit,
+                skip_ids,
             )
+            results.extend(collected)
+            if self._collector.last_error:
+                self._last_collection_error = self._collector.last_error
+                break
 
         query_limit = min(max(count, LINKEDIN_MAX_LISTINGS), remaining)
         # Never accept more results than the daily allowance, even if an Actor
@@ -327,6 +344,74 @@ class JobHunterAgent(BaseAgent):
         if len(self._seen_job_ids) > 500:  # cap unbounded growth
             self._seen_job_ids = set(list(self._seen_job_ids)[-250:])
         return picked
+
+    async def _daily_quota_status(self) -> tuple[int, int]:
+        facts = await self.fetch_facts()
+        quota = self._read_daily_quota(facts.get(self._daily_quota_fact), date.today().isoformat())
+        return int(quota["used"]), JOB_HUNTER_DAILY_LIMIT
+
+    @staticmethod
+    def _requested_count(message: str) -> int:
+        match = re.search(r"\b(\d{1,2})\s+(?:new\s+)?jobs?\b", message, flags=re.IGNORECASE)
+        return min(int(match.group(1)), LINKEDIN_MAX_LISTINGS) if match else LINKEDIN_MAX_LISTINGS
+
+    @staticmethod
+    def _search_request(message: str) -> str:
+        # Messages sent via /ask are already stripped by BaseAgent's #human
+        # listener; messages typed in #jobs retain their @mention.
+        return re.sub(r"^@job_hunter\b\s*", "", message, flags=re.IGNORECASE).strip()
+
+    async def respond_to_message(self, message: str, reply_channel: str | None = None) -> str | None:
+        """Run a real Apify search for a direct Job Hunter request.
+
+        This intentionally does not call the general chat LLM: a model must
+        never claim that it searched LinkedIn or speculate about Apify billing.
+        """
+        criteria = self._search_request(message)
+        if not criteria:
+            criteria = LINKEDIN_KEYWORDS
+
+        await self.set_state("searching")
+        try:
+            used_before, limit = await self._daily_quota_status()
+            if used_before >= limit:
+                self._quota_exhausted_today = True
+                reply = f"⏸ Daily LinkedIn listing quota reached ({used_before}/{limit}). I’ll resume tomorrow."
+                await self.append_memory("user", message)
+                await self.announce(reply, channel=reply_channel)
+                return reply
+
+            requested_count = self._requested_count(criteria)
+            await self.announce(
+                f"🔎 Searching LinkedIn through Apify now for “{criteria}” "
+                f"(up to {requested_count} listings; daily quota: {used_before}/{limit}).",
+                channel=reply_channel,
+            )
+            jobs = await self._fetch_listings(criteria, count=requested_count)
+            used, limit = await self._daily_quota_status()
+            if jobs:
+                formatted = "\n\n".join(_format_listing(job) for job in jobs)
+                reply = (
+                    f"🔍 LinkedIn search completed through Apify — {len(jobs)} verified listing"
+                    f"{'s' if len(jobs) != 1 else ''} (daily quota: {used}/{limit}).\n\n{formatted}"
+                )
+            elif self._quota_exhausted_today:
+                reply = f"⏸ Daily LinkedIn listing quota reached ({used}/{limit}). I’ll resume tomorrow."
+            elif self._last_collection_error:
+                reply = (
+                    f"⚠️ LinkedIn search could not complete: {self._last_collection_error}. "
+                    f"No listings were returned or charged to today’s listing quota ({used}/{limit})."
+                )
+            else:
+                reply = (
+                    f"🔎 LinkedIn search completed through Apify, but returned no matching listings "
+                    f"for “{criteria}” (daily quota: {used}/{limit})."
+                )
+            await self.append_memory("user", message)
+            await self.announce(reply, channel=reply_channel)
+            return reply
+        finally:
+            await self.set_state("idle")
 
     @staticmethod
     def _search_terms(value: str) -> list[str]:
@@ -421,7 +506,8 @@ class JobHunterAgent(BaseAgent):
                 )
                 result = formatted
             else:
-                await self.announce(f"⚠️ Couldn't fetch listings for '{criteria}' right now.")
+                error = self._last_collection_error or "Apify returned no matching listings"
+                await self.announce(f"⚠️ LinkedIn search for '{criteria}' did not return listings: {error}.")
                 result = None
             await self.complete_task(task.task_id, {"result": result})
             await self.set_state("idle")

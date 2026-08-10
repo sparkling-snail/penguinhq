@@ -12,6 +12,8 @@ import type { Agent, AgentState } from "@/types/agent";
 // system Claude-Office uses for its office room, so nothing needs
 // recomputing on resize.
 const ROOM_ASPECT_RATIO = "1469 / 1071";
+const ROOM_ART_WIDTH = 1469;
+const CHARACTER_SCALE_MULTIPLIER = 2;
 
 // The back wall (windows/door/water cooler) occupies roughly the top 44%
 // of the room art; the open floor below that is where penguins can walk.
@@ -160,8 +162,10 @@ function stationForAgent(agent: Agent): OfficeStation {
  * needs continuously-updated positions rather than "glide to a waypoint".
  */
 export function GameCanvas() {
+  const roomRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<CharacterHandle>(null);
   const pressedRef = useRef<Set<string>>(new Set());
+  const roomScaleRef = useRef(1);
 
   const playerPos = useRef({ x: 50, y: 80 });
   const playerDirection = useRef<SpriteDirection>("front-left");
@@ -198,6 +202,21 @@ export function GameCanvas() {
     setClock(new Date());
     const interval = window.setInterval(() => setClock(new Date()), 60_000);
     return () => window.clearInterval(interval);
+  }, []);
+
+  // Characters are authored against the room image's native 1469px width.
+  // ResizeObserver keeps their pixel dimensions in lockstep with the CSS
+  // background as the room grows or shrinks with the viewport.
+  useEffect(() => {
+    const room = roomRef.current;
+    if (!room) return;
+    const updateScale = () => {
+      roomScaleRef.current = room.clientWidth / ROOM_ART_WIDTH;
+    };
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(room);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -273,6 +292,7 @@ export function GameCanvas() {
 
       playerBobPhase.current += delta * 0.08;
       playerRef.current?.setPosition(playerPos.current.x, playerPos.current.y);
+      playerRef.current?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
       playerRef.current?.setBob(Math.sin(playerBobPhase.current) * 1.5);
       playerRef.current?.setFacing(playerDirection.current);
 
@@ -318,6 +338,7 @@ export function GameCanvas() {
 
         const handle = npcHandlesRef.current.get(agent.id);
         handle?.setPosition(runtime.pos.x, runtime.pos.y);
+        handle?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
         handle?.setBob(Math.sin(runtime.bobPhase) * 1.5);
         handle?.setFacing(runtime.direction);
         // Ring color reflects the agent's real backend state (idle,
@@ -334,6 +355,7 @@ export function GameCanvas() {
 
   return (
     <div
+      ref={roomRef}
       className="relative mx-auto h-auto w-full overflow-hidden rounded-xl bg-cover bg-center"
       style={{
         aspectRatio: ROOM_ASPECT_RATIO,

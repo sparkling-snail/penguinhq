@@ -49,6 +49,8 @@ export interface CharacterHandle {
   setPosition(xPct: number, yPct: number): void;
   /** Idle-bob offset in px, applied every frame regardless of sprite mode. */
   setBob(offsetPx: number): void;
+  /** Perspective scale, anchored to the character's feet. */
+  setScale(scale: number): void;
   /** `boolean` for "static" sprites (flip left/right); `SpriteDirection`
    * for "directional" ones (swaps which of the 4 images is shown). */
   setFacing(input: boolean | SpriteDirection): void;
@@ -78,6 +80,7 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
   const spriteRef = useRef<HTMLImageElement>(null);
   const [state, setState] = useState<AgentState>("idle");
   const bobRef = useRef(0);
+  const scaleRef = useRef(1);
   const flippedRef = useRef(false);
   const lastDirectionRef = useRef<SpriteDirection>("front-left");
 
@@ -106,6 +109,11 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
       bobRef.current = offsetPx;
       applyTransform();
     },
+    setScale(scale) {
+      scaleRef.current = scale;
+      const el = wrapperRef.current;
+      if (el) el.style.transform = `translate(-50%, -100%) scale(${scaleRef.current})`;
+    },
     setFacing(input) {
       if (sprite.type === "static") {
         flippedRef.current = input as boolean;
@@ -133,7 +141,12 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
     <div
       ref={wrapperRef}
       className="absolute"
-      style={{ width: CHARACTER_BOX_WIDTH, height: SPRITE_HEIGHT, transform: "translate(-50%, -100%)" }}
+      style={{
+        width: CHARACTER_BOX_WIDTH,
+        height: SPRITE_HEIGHT,
+        transform: "translate(-50%, -100%) scale(1)",
+        transformOrigin: "bottom center",
+      }}
     >
       <div className="relative" style={{ width: CHARACTER_BOX_WIDTH, height: SPRITE_HEIGHT }}>
         {speech && (
