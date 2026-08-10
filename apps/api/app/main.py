@@ -17,11 +17,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import agents, chat, health, hooks, jobs, memory, tasks, websocket
+from app.api.routes import agents, chat, health, hooks, jobs, memory, practice, tasks, websocket
 from app.core.config import get_settings
 from app.core.database import init_db
 from app.domain.models.task import Task  # noqa: F401 — ensure table is created by init_db
 from app.domain.models.job_listing import JobListing  # noqa: F401 — ensure table is created by init_db
+from app.domain.models.practice import AttemptFeedback, PracticeAttempt, PracticeSession  # noqa: F401
 from app.seed import seed_agents_if_empty
 
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +64,7 @@ app.include_router(chat.router)
 app.include_router(memory.router)
 app.include_router(jobs.router)
 app.include_router(tasks.router)
+app.include_router(practice.router)
 app.include_router(websocket.router)
 
 

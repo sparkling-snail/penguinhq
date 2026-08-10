@@ -4,13 +4,16 @@ Leetcode Coach — refactored from the original standalone agent.
 Same behavior as the original apps/api/app/autonomous/leetcode_coach.py,
 but now a BaseAgent subclass running inside the agent-runner container.
 
-Autonomous cycle: invent problem → solve → critique → idle.
+Autonomous cycle: publish one user-facing practice problem, then wait for the
+user's attempt. The coach guides and reviews; it never posts a full solution
+unless the user explicitly asks to reveal one.
 Receives human chat messages and practice_problem tasks from other agents.
 """
 
 import logging
+import re
 
-from app.autonomous.base import BaseAgent, _strip_code_fence
+from app.autonomous.base import BaseAgent
 from app.autonomous.bus import AgentMessage
 
 logger = logging.getLogger("penguinhq.agents.leetcode_coach")
@@ -18,20 +21,24 @@ logger = logging.getLogger("penguinhq.agents.leetcode_coach")
 
 class LeetcodeCoachAgent(BaseAgent):
     role = "leetcode_coach"
-    cycle_seconds = 120
-    chat_channel = "logs"
+    cycle_seconds = 86400
+    chat_channel = "leetcode"
     memory_limit = 16
     fact_schema = ["preferred_language", "skill_level", "weak_topics"]
 
     def system_prompt(self) -> str:
         return (
-            "You are Leetcode Coach, an AI that helps with coding-interview practice. "
-            "Reply directly and helpfully, in character. 1-4 sentences unless code is "
-            "genuinely needed to answer."
+            "You are Leetcode Coach, an AI pair-programming coach. The user—not you—"
+            "solves the problem. Give a concise problem statement, clarifying questions, "
+            "test cases, progressively stronger hints, and feedback on the user's code. "
+            "Do not provide a complete solution, full implementation, or line-by-line "
+            "algorithm unless the user explicitly asks to reveal the answer. Encourage "
+            "the user to explain their approach first. Keep replies to 1-4 sentences "
+            "unless reviewing a submitted attempt."
         )
 
     async def run_cycle(self) -> None:
-        """Invent a problem, solve it, critique the solution."""
+        """Publish one daily challenge, then leave the solving to the user."""
         await self.set_state("planning")
         problem = await self.ask_llm(
             "Invent one original, short coding-interview practice problem — vary the topic "
@@ -40,28 +47,21 @@ class LeetcodeCoachAgent(BaseAgent):
         )
         if problem:
             await self.announce(f"📝 New practice problem:\n{problem}")
-
-        await self.set_state("coding")
-        solution = _strip_code_fence(
-            await self.ask_llm(
-                f"Solve this coding problem in Python. Reply with only the code, no explanation "
-                f"before or after:\n\n{problem}"
-            )
-        )
-        if solution:
-            await self.announce(f"💻 My solution:\n```python\n{solution}\n```")
-
-        await self.set_state("researching")
-        critique = await self.ask_llm(
-            f"Problem:\n{problem}\n\nMy solution:\n{solution}\n\n"
-            "Critique this solution in 2-3 sentences: is it correct, what's the time "
-            "complexity, and is there any edge case it misses? Be honest and specific — "
-            "this is a self-review, not a pep talk."
-        )
-        if critique:
-            await self.announce(f"🔍 Self-review: {critique}")
-
         await self.set_state("idle")
+
+    async def respond_to_message(self, message: str, reply_channel: str | None = None) -> str | None:
+        """Persist the coach's review when it was requested from a saved attempt."""
+        reply = await super().respond_to_message(message, reply_channel)
+        match = re.search(r"\[practice_attempt:([0-9a-f-]{36})\]", message, flags=re.IGNORECASE)
+        if match and reply:
+            try:
+                await self._http.post(
+                    f"{self._api_base()}/practice/attempts/{match.group(1)}/feedback",
+                    json={"content": reply, "author": self.role},
+                )
+            except Exception:
+                logger.exception("failed to save coaching feedback for attempt %s", match.group(1))
+        return reply
 
     async def handle_task(self, task: AgentMessage) -> None:
         """Handle incoming tasks (e.g., a practice problem request)."""
@@ -70,7 +70,7 @@ class LeetcodeCoachAgent(BaseAgent):
             topic = task.payload.get("topic", "any")
             problem = await self.ask_llm(
                 f"Generate a coding-interview practice problem about {topic}. "
-                f"Give just the problem statement in 2-4 sentences."
+                f"Give just the problem statement in 2-4 sentences—no solution or hints."
             )
             if problem:
                 await self.announce(f"📝 Requested practice problem:\n{problem}")

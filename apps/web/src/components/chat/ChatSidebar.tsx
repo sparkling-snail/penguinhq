@@ -7,6 +7,7 @@ import { useChatStore } from "@/stores/chatStore";
 
 interface ChatSidebarProps {
   width?: number;
+  onOpenPracticeDesk?: () => void;
 }
 
 /**
@@ -15,16 +16,27 @@ interface ChatSidebarProps {
  * component, so each can grow independently as real backend events
  * start flowing through the communication-center milestone.
  */
-export function ChatSidebar({ width = 320 }: ChatSidebarProps) {
+export function ChatSidebar({ width = 320, onOpenPracticeDesk }: ChatSidebarProps) {
   const activeChannelId = useChatStore((s) => s.activeChannelId);
 
   return (
     <aside className="glass-panel flex h-full shrink-0 flex-col" style={{ width }}>
-      <div className="flex items-center justify-between border-b border-penguin-border px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2 border-b border-penguin-border px-3 py-2.5">
         <span className="text-sm font-semibold text-slate-100">PenguinHQ</span>
-        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-          live
-        </span>
+        <div className="flex items-center gap-1.5">
+          {activeChannelId === "leetcode" && (
+            <button
+              type="button"
+              onClick={onOpenPracticeDesk}
+              className="rounded-md bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium text-violet-300 transition-colors hover:bg-violet-500/25"
+            >
+              &lt;/&gt; practice
+            </button>
+          )}
+          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+            live
+          </span>
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1">

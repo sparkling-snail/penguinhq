@@ -364,7 +364,7 @@ class BaseAgent(ABC):
 
     # --- Default human message handler ---
 
-    async def respond_to_message(self, message: str, reply_channel: str | None = None) -> None:
+    async def respond_to_message(self, message: str, reply_channel: str | None = None) -> str | None:
         """Handle a human chat message (interrupt). Default: multi-turn with
         memory + durable facts. Fact extraction runs *after* the reply is
         sent, not before — it's a second LLM call, and the human shouldn't
@@ -383,6 +383,7 @@ class BaseAgent(ABC):
 
         if reply:
             await self._extract_facts(message, reply)
+        return reply
 
     # --- Background listeners ---
 

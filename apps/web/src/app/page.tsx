@@ -7,20 +7,22 @@ import { GameCanvas } from "@/components/game/GameCanvas";
 import { ResizeHandle, DEFAULT_WIDTH } from "@/components/ResizeHandle";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAgents } from "@/hooks/useAgents";
+import { LeetcodePracticeDesk } from "@/components/leetcode/LeetcodePracticeDesk";
 
 function PenguinHQShell() {
   useWebSocket();
   useAgents();
 
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_WIDTH);
+  const [practiceDeskOpen, setPracticeDeskOpen] = useState(false);
 
   return (
     <main className="flex h-screen w-screen p-3">
       <div className="flex min-w-0 flex-1 items-center justify-center">
-        <GameCanvas />
+        {practiceDeskOpen ? <LeetcodePracticeDesk onClose={() => setPracticeDeskOpen(false)} /> : <GameCanvas />}
       </div>
       <ResizeHandle sidebarWidth={sidebarWidth} onWidthChange={setSidebarWidth} />
-      <ChatSidebar width={sidebarWidth} />
+      <ChatSidebar width={sidebarWidth} onOpenPracticeDesk={() => setPracticeDeskOpen(true)} />
     </main>
   );
 }

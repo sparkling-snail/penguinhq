@@ -53,7 +53,7 @@ API_BASE = os.environ.get("PENGUINHQ_API_BASE", "http://api:8000")
 WS_BASE = os.environ.get("PENGUINHQ_WS_BASE", "ws://api:8000/ws")
 MODEL = os.environ.get("LEETCODE_COACH_MODEL", "claude-haiku-4-5-20251001")
 CYCLE_SECONDS = int(os.environ.get("LEETCODE_COACH_INTERVAL_SECONDS", "120"))
-CHAT_CHANNEL = "logs"
+CHAT_CHANNEL = "leetcode"
 MEMORY_FETCH_LIMIT = int(os.environ.get("LEETCODE_COACH_MEMORY_LIMIT", "16"))
 
 client = AsyncAnthropic()  # reads ANTHROPIC_API_KEY from the environment

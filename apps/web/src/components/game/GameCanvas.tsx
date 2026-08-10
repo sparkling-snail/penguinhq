@@ -75,6 +75,16 @@ const STATE_STATION: Record<AgentState, keyof typeof OFFICE_STATIONS> = {
   coordinating: "collaboration",
 };
 
+// When the office is quiet, give every specialist a familiar spot instead
+// of sending the entire flock to the café. This makes an idle office feel
+// lived-in and leaves the right-hand corner free for actual café routines.
+const IDLE_STATION_BY_ROLE: Record<string, keyof typeof OFFICE_STATIONS> = {
+  tech_scout: "library",
+  portfolio: "desk",
+  job_hunter: "entrance",
+  leetcode_coach: "collaboration",
+};
+
 const STATE_SPEECH: Partial<Record<AgentState, string>> = {
   planning: "Planning the next move…",
   thinking: "Thinking it through…",
@@ -124,6 +134,14 @@ function fishGatherPosition(index: number): OfficeStation {
 function officeLight(hour: number, mode: "auto" | "day" | "night"): "day" | "night" {
   if (mode === "day" || mode === "night") return mode;
   return hour >= 7 && hour < 19 ? "day" : "night";
+}
+
+function stationForAgent(agent: Agent): OfficeStation {
+  const stationKey =
+    agent.state === "idle"
+      ? (IDLE_STATION_BY_ROLE[agent.role] ?? STATE_STATION.idle)
+      : STATE_STATION[agent.state];
+  return { ...OFFICE_STATIONS[stationKey]! };
 }
 
 /**
@@ -281,7 +299,7 @@ export function GameCanvas() {
           runtime.routineKey = routineKey;
           runtime.target = fishDeliveryActive
             ? { ...fishGatherPosition(agentIndex) }
-            : { ...OFFICE_STATIONS[STATE_STATION[agent.state]]! };
+            : stationForAgent(agent);
         }
 
         const tdx = runtime.target.x - runtime.pos.x;
