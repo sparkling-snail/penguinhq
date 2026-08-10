@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useChatStore } from "@/stores/chatStore";
 import { MessageContent } from "./MessageContent";
 
@@ -16,6 +17,11 @@ function formatTime(iso: string): string {
  */
 export function MessageList() {
   const messages = useChatStore((s) => s.messagesForActiveChannel());
+  // Locale/timezone formatting is browser-specific. Defer it until after
+  // hydration so the server's timezone never disagrees with the user's.
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
 
   if (messages.length === 0) {
     return (
@@ -42,7 +48,9 @@ export function MessageList() {
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
               <span className="text-sm font-semibold text-slate-100">{message.authorName}</span>
-              <span className="text-[10px] text-slate-500">{formatTime(message.createdAt)}</span>
+              <span className="text-[10px] text-slate-500" suppressHydrationWarning>
+                {mounted ? formatTime(message.createdAt) : ""}
+              </span>
             </div>
             <MessageContent content={message.content} />
           </div>

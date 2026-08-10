@@ -20,22 +20,39 @@ export interface PigeonInFlight extends PigeonPayload {
   dispatchedAt: number;
 }
 
+export interface AgentSpeech {
+  text: string;
+  expiresAt: number;
+}
+
+export type OfficeTimeMode = "auto" | "day" | "night";
+
 interface GameState {
   agents: Record<string, Agent>;
   selectedAgentId: string | null;
   pigeonsInFlight: PigeonInFlight[];
+  agentSpeech: Record<string, AgentSpeech>;
+  officeModeEnabled: boolean;
+  officeTimeMode: OfficeTimeMode;
 
   setAgents: (agents: Agent[]) => void;
   upsertAgent: (agent: Agent) => void;
   selectAgent: (id: string | null) => void;
   addPigeon: (pigeon: PigeonPayload) => void;
   removePigeon: (id: string) => void;
+  setAgentSpeech: (agentId: string, text: string, durationMs?: number) => void;
+  clearAgentSpeech: (agentId: string) => void;
+  setOfficeModeEnabled: (enabled: boolean) => void;
+  setOfficeTimeMode: (mode: OfficeTimeMode) => void;
 }
 
 export const useGameStore = create<GameState>((set) => ({
   agents: {},
   selectedAgentId: null,
   pigeonsInFlight: [],
+  agentSpeech: {},
+  officeModeEnabled: true,
+  officeTimeMode: "auto",
 
   setAgents: (agents) =>
     set(() => ({
@@ -61,4 +78,21 @@ export const useGameStore = create<GameState>((set) => ({
     set((state) => ({
       pigeonsInFlight: state.pigeonsInFlight.filter((p) => p.id !== id),
     })),
+
+  setAgentSpeech: (agentId, text, durationMs = 12_000) =>
+    set((state) => ({
+      agentSpeech: {
+        ...state.agentSpeech,
+        [agentId]: { text, expiresAt: Date.now() + durationMs },
+      },
+    })),
+
+  clearAgentSpeech: (agentId) =>
+    set((state) => {
+      const { [agentId]: _removed, ...agentSpeech } = state.agentSpeech;
+      return { agentSpeech };
+    }),
+
+  setOfficeModeEnabled: (officeModeEnabled) => set({ officeModeEnabled }),
+  setOfficeTimeMode: (officeTimeMode) => set({ officeTimeMode }),
 }));

@@ -58,6 +58,7 @@ export interface CharacterHandle {
 export interface CharacterProps {
   name: string;
   sprite: CharacterSprite;
+  speech?: string;
 }
 
 /**
@@ -70,7 +71,7 @@ export interface CharacterProps {
  * or a backend agent-state change) is React state.
  */
 export const Character = forwardRef<CharacterHandle, CharacterProps>(function Character(
-  { name, sprite },
+  { name, sprite, speech },
   ref
 ) {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -135,6 +136,15 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
       style={{ width: CHARACTER_BOX_WIDTH, height: SPRITE_HEIGHT, transform: "translate(-50%, -100%)" }}
     >
       <div className="relative" style={{ width: CHARACTER_BOX_WIDTH, height: SPRITE_HEIGHT }}>
+        {speech && (
+          <div
+            className="office-speech-bubble absolute left-1/2 w-36 rounded-lg border border-sky-200/30 bg-slate-950/90 px-2 py-1 text-center text-[10px] leading-tight text-slate-100 shadow-lg"
+            style={{ bottom: SPRITE_HEIGHT + 29, transform: "translateX(-50%)" }}
+          >
+            {speech}
+          </div>
+        )}
+
         <span
           className="absolute left-1/2 whitespace-nowrap text-[11px] text-slate-200"
           style={{

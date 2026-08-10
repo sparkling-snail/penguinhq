@@ -5,7 +5,7 @@ import { Character, type CharacterHandle, type SpriteDirection } from "./Charact
 import { PigeonSprite } from "./PigeonSprite";
 import { PigeonTooltip } from "./PigeonTooltip";
 import { useGameStore, type PigeonInFlight } from "@/stores/gameStore";
-import type { Agent } from "@/types/agent";
+import type { Agent, AgentState } from "@/types/agent";
 
 // Room art is a fixed 1469x1071 screenshot (club_penguin_office.png) —
 // everything below is a percentage of that box, the same coordinate
@@ -21,8 +21,6 @@ const MARGIN_X = 4;
 
 const PLAYER_SPEED = 0.32; // % of room width per frame at delta=1 (60fps)
 const NPC_SPEED = 0.11;
-const NPC_IDLE_MIN_MS = 1500;
-const NPC_IDLE_MAX_MS = 4000;
 
 // The 4 named penguin sprites we have art for. Agents beyond the 4th
 // cycle back through this list rather than needing a 1:1 asset per agent.
@@ -43,19 +41,77 @@ function getDirectionFromDelta(dx: number, dy: number): SpriteDirection {
   return "front-left";
 }
 
+interface OfficeStation {
+  x: number;
+  y: number;
+}
+
+// These anchors correspond to places in the room art. Agent state remains
+// the source of truth; this is only the visual routine chosen for that state.
+const OFFICE_STATIONS: Record<string, OfficeStation> = {
+  library: { x: 17, y: 61 },
+  desk: { x: 53, y: 69 },
+  collaboration: { x: 47, y: 80 },
+  cafe: { x: 74, y: 64 },
+  support: { x: 84, y: 79 },
+  entrance: { x: 10, y: 91 },
+};
+
+const STATE_STATION: Record<AgentState, keyof typeof OFFICE_STATIONS> = {
+  idle: "cafe",
+  walking: "entrance",
+  planning: "collaboration",
+  thinking: "desk",
+  coding: "desk",
+  researching: "library",
+  meeting: "collaboration",
+  blocked: "support",
+  waiting: "cafe",
+  sleeping: "cafe",
+  debugging: "desk",
+  error: "support",
+  searching: "library",
+  evaluating: "desk",
+  coordinating: "collaboration",
+};
+
+const STATE_SPEECH: Partial<Record<AgentState, string>> = {
+  planning: "Planning the next move…",
+  thinking: "Thinking it through…",
+  coding: "Typing away…",
+  researching: "Reading the latest notes…",
+  meeting: "In a penguin huddle…",
+  blocked: "I need a hand here.",
+  waiting: "Taking a coffee break…",
+  sleeping: "Recharging for tomorrow…",
+  debugging: "Chasing a tricky bug…",
+  error: "Something needs attention.",
+  searching: "Searching for fresh leads…",
+  evaluating: "Comparing the options…",
+  coordinating: "Coordinating the flock…",
+};
+
+const OFFICE_EVENTS = [
+  { emoji: "🐟", text: "Fish delivery! The office is briefly distracted.", kind: "fish" },
+  { emoji: "❄️", text: "Snowstorm outside — warm drinks are on.", kind: "snow" },
+  { emoji: "☕", text: "Coffee machine fixed. Productivity restored.", kind: "coffee" },
+  { emoji: "🖨️", text: "Printer jam! Someone has called IT.", kind: "printer" },
+  { emoji: "🐦", text: "Pigeon convention in the lobby. Expect extra mail.", kind: "pigeon" },
+] as const;
+
+type OfficeEvent = (typeof OFFICE_EVENTS)[number];
+
 interface NpcRuntime {
   pos: { x: number; y: number };
   target: { x: number; y: number };
-  idleUntil: number;
   bobPhase: number;
   direction: SpriteDirection;
+  routineState?: AgentState;
 }
 
-function randomWalkable(): { x: number; y: number } {
-  return {
-    x: MARGIN_X + Math.random() * (100 - MARGIN_X * 2),
-    y: WALKABLE_MIN_Y + Math.random() * (WALKABLE_MAX_Y - WALKABLE_MIN_Y),
-  };
+function officeLight(hour: number, mode: "auto" | "day" | "night"): "day" | "night" {
+  if (mode === "day" || mode === "night") return mode;
+  return hour >= 7 && hour < 19 ? "day" : "night";
 }
 
 /**
@@ -75,7 +131,7 @@ export function GameCanvas() {
   const pressedRef = useRef<Set<string>>(new Set());
 
   const playerPos = useRef({ x: 50, y: 80 });
-  const playerFlipped = useRef(false);
+  const playerDirection = useRef<SpriteDirection>("front-left");
   const playerBobPhase = useRef(Math.random() * Math.PI * 2);
 
   // One wander-AI runtime + DOM handle per agent, keyed by agent id.
@@ -83,10 +139,17 @@ export function GameCanvas() {
   const npcHandlesRef = useRef<Map<string, CharacterHandle | null>>(new Map());
 
   const [hoveredPigeon, setHoveredPigeon] = useState<PigeonInFlight | null>(null);
+  const [officeEvent, setOfficeEvent] = useState<OfficeEvent | null>(null);
+  // Time is browser-local. Start neutral so server and client render the
+  // same HTML, then adopt the local clock after hydration.
+  const [clock, setClock] = useState<Date | null>(null);
 
   const agents = useGameStore((s) => s.agents);
   const pigeonsInFlight = useGameStore((s) => s.pigeonsInFlight);
   const removePigeon = useGameStore((s) => s.removePigeon);
+  const agentSpeech = useGameStore((s) => s.agentSpeech);
+  const officeModeEnabled = useGameStore((s) => s.officeModeEnabled);
+  const officeTimeMode = useGameStore((s) => s.officeTimeMode);
 
   // Stable ordering so the same agent always gets the same sprite/index
   // across re-renders (the store keeps agents in a Record, whose
@@ -95,6 +158,37 @@ export function GameCanvas() {
     () => Object.values(agents).sort((a, b) => a.id.localeCompare(b.id)),
     [agents]
   );
+
+  const light = officeLight(clock?.getHours() ?? 12, officeTimeMode);
+
+  useEffect(() => {
+    setClock(new Date());
+    const interval = window.setInterval(() => setClock(new Date()), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!officeModeEnabled) {
+      setOfficeEvent(null);
+      return;
+    }
+
+    let eventTimer: number | undefined;
+    let dismissTimer: number | undefined;
+    const scheduleEvent = (delay: number) => {
+      eventTimer = window.setTimeout(() => {
+        setOfficeEvent(OFFICE_EVENTS[Math.floor(Math.random() * OFFICE_EVENTS.length)]!);
+        dismissTimer = window.setTimeout(() => setOfficeEvent(null), 7_000);
+        scheduleEvent(45_000 + Math.random() * 45_000);
+      }, delay);
+    };
+    scheduleEvent(15_000 + Math.random() * 15_000);
+
+    return () => {
+      if (eventTimer) window.clearTimeout(eventTimer);
+      if (dismissTimer) window.clearTimeout(dismissTimer);
+    };
+  }, [officeModeEnabled]);
 
   // Keyboard input — tracked in a ref (not state) since it's read every
   // frame by the game loop below, not something React needs to react to.
@@ -141,16 +235,15 @@ export function GameCanvas() {
           WALKABLE_MIN_Y,
           WALKABLE_MAX_Y
         );
-        if (dx !== 0) playerFlipped.current = dx < 0;
+        playerDirection.current = getDirectionFromDelta(dx, dy);
       }
 
       playerBobPhase.current += delta * 0.08;
       playerRef.current?.setPosition(playerPos.current.x, playerPos.current.y);
       playerRef.current?.setBob(Math.sin(playerBobPhase.current) * 1.5);
-      playerRef.current?.setFacing(playerFlipped.current);
+      playerRef.current?.setFacing(playerDirection.current);
 
-      // --- Agents: wander AI (pick a point, walk to it, idle, repeat) ---
-      const npcNow = performance.now();
+      // --- Agents: state-driven office routines ---
       const liveIds = new Set(agentList.map((a) => a.id));
       for (const id of npcRuntimeRef.current.keys()) {
         if (!liveIds.has(id)) npcRuntimeRef.current.delete(id);
@@ -159,31 +252,29 @@ export function GameCanvas() {
       for (const agent of agentList) {
         let runtime = npcRuntimeRef.current.get(agent.id);
         if (!runtime) {
-          const start = randomWalkable();
-          runtime = {
+          const start = { ...OFFICE_STATIONS.entrance! };
+          const newRuntime: NpcRuntime = {
             pos: start,
             target: start,
-            idleUntil: npcNow + Math.random() * NPC_IDLE_MAX_MS,
             bobPhase: Math.random() * Math.PI * 2,
             direction: "front-left",
           };
-          npcRuntimeRef.current.set(agent.id, runtime);
+          runtime = newRuntime;
+          npcRuntimeRef.current.set(agent.id, newRuntime);
         }
 
-        if (npcNow >= runtime.idleUntil) {
-          const tdx = runtime.target.x - runtime.pos.x;
-          const tdy = runtime.target.y - runtime.pos.y;
-          const distance = Math.sqrt(tdx * tdx + tdy * tdy);
+        if (runtime.routineState !== agent.state) {
+          runtime.routineState = agent.state;
+          runtime.target = { ...OFFICE_STATIONS[STATE_STATION[agent.state]]! };
+        }
 
-          if (distance < 1) {
-            runtime.idleUntil =
-              npcNow + NPC_IDLE_MIN_MS + Math.random() * (NPC_IDLE_MAX_MS - NPC_IDLE_MIN_MS);
-            runtime.target = randomWalkable();
-          } else {
-            runtime.pos.x += (tdx / distance) * NPC_SPEED * delta;
-            runtime.pos.y += (tdy / distance) * NPC_SPEED * delta;
-            runtime.direction = getDirectionFromDelta(tdx, tdy);
-          }
+        const tdx = runtime.target.x - runtime.pos.x;
+        const tdy = runtime.target.y - runtime.pos.y;
+        const distance = Math.sqrt(tdx * tdx + tdy * tdy);
+        if (distance >= 0.5) {
+          runtime.pos.x += (tdx / distance) * NPC_SPEED * delta;
+          runtime.pos.y += (tdy / distance) * NPC_SPEED * delta;
+          runtime.direction = getDirectionFromDelta(tdx, tdy);
         }
 
         runtime.bobPhase += delta * 0.08;
@@ -194,7 +285,7 @@ export function GameCanvas() {
         handle?.setFacing(runtime.direction);
         // Ring color reflects the agent's real backend state (idle,
         // coding, blocked, ...) rather than the cosmetic wander AI above.
-        handle?.setState(agent.state);
+        handle?.setState(distance >= 0.5 ? "walking" : agent.state);
       }
 
       rafId = requestAnimationFrame(tick);
@@ -213,16 +304,50 @@ export function GameCanvas() {
         backgroundImage: "url(/sprites/club-penguin-office.webp)",
       }}
     >
-      <Character ref={playerRef} name="You" sprite={{ type: "static", url: "/sprites/penguin-blue.webp" }} />
+      <Character ref={playerRef} name="Watty" sprite={{ type: "directional", base: "watty" }} />
 
-      {agentList.map((agent, i) => (
+      {officeModeEnabled && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-0 transition-colors duration-1000 ${
+            light === "night" ? "bg-slate-950/40" : "bg-amber-100/5"
+          }`}
+          style={{ mixBlendMode: light === "night" ? "multiply" : "screen" }}
+        />
+      )}
+
+      {officeModeEnabled && officeEvent && (
+        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-white/15 bg-slate-950/85 px-3 py-1.5 text-center text-xs text-slate-100 shadow-lg backdrop-blur">
+          <span className="mr-1.5">{officeEvent.emoji}</span>
+          {officeEvent.text}
+        </div>
+      )}
+
+      {officeModeEnabled && officeEvent?.kind === "snow" && (
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden text-lg text-white/70">
+          <span className="office-snowflake left-[12%]">❄</span>
+          <span className="office-snowflake left-[38%] [animation-delay:1.2s]">❄</span>
+          <span className="office-snowflake left-[67%] [animation-delay:2.4s]">❄</span>
+          <span className="office-snowflake left-[88%] [animation-delay:0.6s]">❄</span>
+        </div>
+      )}
+
+      {agentList.map((agent, i) => {
+        const liveSpeech = agentSpeech[agent.id];
+        const speech =
+          liveSpeech && liveSpeech.expiresAt > (clock?.getTime() ?? 0)
+            ? liveSpeech.text
+            : STATE_SPEECH[agent.state];
+        return (
         <AgentCharacter
           key={agent.id}
           agent={agent}
           spriteBase={AGENT_SPRITE_BASES[i % AGENT_SPRITE_BASES.length]!}
+          speech={speech}
           onHandle={(h) => npcHandlesRef.current.set(agent.id, h)}
         />
-      ))}
+        );
+      })}
 
       {pigeonsInFlight.map((pigeon) => (
         <PigeonSprite
@@ -247,10 +372,12 @@ export function GameCanvas() {
 function AgentCharacter({
   agent,
   spriteBase,
+  speech,
   onHandle,
 }: {
   agent: Agent;
   spriteBase: string;
+  speech?: string;
   onHandle: (handle: CharacterHandle | null) => void;
 }) {
   return (
@@ -258,6 +385,7 @@ function AgentCharacter({
       ref={onHandle}
       name={agent.name}
       sprite={{ type: "directional", base: spriteBase }}
+      speech={speech}
     />
   );
 }

@@ -33,3 +33,46 @@
     transform: scaleY(0.7);
   }
 }
+
+@keyframes speech-pop {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes office-snow {
+  from {
+    transform: translateY(-1rem) rotate(0deg);
+  }
+  to {
+    transform: translateY(110vh) rotate(180deg);
+  }
+}
+
+.office-speech-bubble {
+  animation: speech-pop 180ms ease-out;
+}
+
+.office-speech-bubble::after {
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  content: "";
+  background: rgb(2 6 23 / 0.9);
+  border-right: 1px solid rgb(186 230 253 / 0.3);
+  border-bottom: 1px solid rgb(186 230 253 / 0.3);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.office-snowflake {
+  position: absolute;
+  top: -1rem;
+  animation: office-snow 3.8s linear infinite;
+}

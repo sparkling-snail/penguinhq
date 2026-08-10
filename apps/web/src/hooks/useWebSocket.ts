@@ -20,6 +20,7 @@ export function useWebSocket(): void {
   const addPigeon = useGameStore((s) => s.addPigeon);
   const removePigeon = useGameStore((s) => s.removePigeon);
   const upsertAgent = useGameStore((s) => s.upsertAgent);
+  const setAgentSpeech = useGameStore((s) => s.setAgentSpeech);
   const addMessage = useChatStore((s) => s.addMessage);
 
   useEffect(() => {
@@ -46,7 +47,15 @@ export function useWebSocket(): void {
           break;
         }
         case "chat.message": {
-          addMessage(event.payload as ChatMessage);
+          const message = event.payload as ChatMessage;
+          addMessage(message);
+          if (message.authorId !== "human") {
+            // An agent announcement is the most specific account of what it
+            // is doing. Show it briefly above the penguin, while state-based
+            // copy remains the fallback for quieter periods.
+            const text = message.content.replace(/\s+/g, " ").trim();
+            if (text) setAgentSpeech(message.authorId, text.slice(0, 92));
+          }
           break;
         }
         case "connection.ack":
@@ -62,5 +71,5 @@ export function useWebSocket(): void {
       unsubscribe();
       socket.disconnect();
     };
-  }, [addPigeon, removePigeon, upsertAgent, addMessage]);
+  }, [addPigeon, removePigeon, upsertAgent, setAgentSpeech, addMessage]);
 }

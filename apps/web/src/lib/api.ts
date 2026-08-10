@@ -1,4 +1,5 @@
 import type { Agent } from "@/types/agent";
+import type { Task } from "@/types/task";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -21,5 +22,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listAgents: () => apiFetch<Agent[]>("/agents"),
+  listTasks: () => apiFetch<Task[]>("/tasks?limit=50"),
   health: () => apiFetch<{ status: string }>("/health"),
 };
