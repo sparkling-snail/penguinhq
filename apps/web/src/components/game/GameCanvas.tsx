@@ -54,8 +54,13 @@ const OFFICE_STATIONS: Record<string, OfficeStation> = {
   collaboration: { x: 47, y: 80 },
   cafe: { x: 74, y: 64 },
   support: { x: 84, y: 79 },
-  entrance: { x: 10, y: 91 },
+  // The old y:91 entrance point sat behind the foreground wall, which
+  // made its penguin look as though it had disappeared. This places the
+  // station on the visible floor directly in front of the staff door.
+  entrance: { x: 65, y: 58 },
 };
+
+const TECH_SCOUT_DESK_POSITION = OFFICE_STATIONS.library!;
 
 const STATE_STATION: Record<AgentState, keyof typeof OFFICE_STATIONS> = {
   idle: "cafe",
@@ -75,10 +80,11 @@ const STATE_STATION: Record<AgentState, keyof typeof OFFICE_STATIONS> = {
   coordinating: "collaboration",
 };
 
-// When the office is quiet, give every specialist a familiar spot instead
-// of sending the entire flock to the café. This makes an idle office feel
-// lived-in and leaves the right-hand corner free for actual café routines.
-const IDLE_STATION_BY_ROLE: Record<string, keyof typeof OFFICE_STATIONS> = {
+// Every specialist has a permanent visible station. Work state changes the
+// ring, speech, and animation, not their home location, so the office stays
+// populated instead of emptying one area whenever several agents share a
+// state such as "searching" or "meeting".
+const HOME_STATION_BY_ROLE: Record<string, keyof typeof OFFICE_STATIONS> = {
   tech_scout: "library",
   portfolio: "desk",
   job_hunter: "entrance",
@@ -137,10 +143,7 @@ function officeLight(hour: number, mode: "auto" | "day" | "night"): "day" | "nig
 }
 
 function stationForAgent(agent: Agent): OfficeStation {
-  const stationKey =
-    agent.state === "idle"
-      ? (IDLE_STATION_BY_ROLE[agent.role] ?? STATE_STATION.idle)
-      : STATE_STATION[agent.state];
+  const stationKey = HOME_STATION_BY_ROLE[agent.role] ?? STATE_STATION[agent.state];
   return { ...OFFICE_STATIONS[stationKey]! };
 }
 
@@ -294,7 +297,7 @@ export function GameCanvas() {
         }
 
         const fishDeliveryActive = officeEvent?.kind === "fish";
-        const routineKey = fishDeliveryActive ? `fish:${agentIndex}` : `state:${agent.state}`;
+        const routineKey = fishDeliveryActive ? `fish:${agentIndex}` : `home:${agent.role}`;
         if (runtime.routineKey !== routineKey) {
           runtime.routineKey = routineKey;
           runtime.target = fishDeliveryActive
@@ -339,6 +342,19 @@ export function GameCanvas() {
       }}
     >
       <Character ref={playerRef} name="Watty" sprite={{ type: "directional", base: "watty" }} />
+
+      <img
+        src="/sprites/props/office-desk-v1.png"
+        alt="Support desk"
+        draggable={false}
+        className="pointer-events-none absolute w-[17%] select-none"
+        style={{
+          left: `${TECH_SCOUT_DESK_POSITION.x}%`,
+          top: `${TECH_SCOUT_DESK_POSITION.y}%`,
+          zIndex: Math.round(TECH_SCOUT_DESK_POSITION.y * 100) - 1,
+          transform: "translate(-50%, -100%)",
+        }}
+      />
 
       {officeModeEnabled && (
         <div
