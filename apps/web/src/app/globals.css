@@ -84,7 +84,9 @@
 }
 
 .office-fish-delivery {
-  width: clamp(82px, 10vw, 150px);
+  /* Percentage width is relative to GameCanvas, so the delivery scales
+     together with the baked-in room and its percentage coordinates. */
+  width: 12%;
   transform: translate(-50%, -100%);
   animation: office-delivery-arrive 420ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
   filter: drop-shadow(0 8px 7px rgb(15 23 42 / 35%));
