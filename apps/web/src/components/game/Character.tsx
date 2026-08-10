@@ -36,6 +36,9 @@ const STATE_RING_COLOR: Record<AgentState, string> = {
 };
 
 const SPRITE_HEIGHT = 74;
+// Furniture uses room-depth z-indexes below 10,000. Keep every character
+// above that layer while preserving depth ordering between penguins.
+const CHARACTER_Z_INDEX_BASE = 20_000;
 // A real, non-zero reference width for the percentage-based centering
 // below (comfortably wider than any sprite's rendered width at
 // SPRITE_HEIGHT tall) — a `width: 0` containing block technically still
@@ -103,7 +106,7 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
       if (!el) return;
       el.style.left = `${xPct}%`;
       el.style.top = `${yPct}%`;
-      el.style.zIndex = String(Math.round(yPct * 100));
+      el.style.zIndex = String(CHARACTER_Z_INDEX_BASE + Math.round(yPct * 100));
     },
     setBob(offsetPx) {
       bobRef.current = offsetPx;
