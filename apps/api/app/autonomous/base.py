@@ -105,7 +105,10 @@ class BaseAgent(ABC):
         self._anthropic = anthropic
         self._bus = bus
         self._inbox: asyncio.Queue[AgentMessage] | None = None
-        self._message_queue: asyncio.Queue[str] = asyncio.Queue()
+        # Preserve the originating channel so direct messages receive their
+        # answer (or a useful failure status) where the human asked them.
+        self._message_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        self._last_llm_error: str | None = None
 
     # --- Shared infrastructure (inherited by all agents) ---
 
@@ -249,6 +252,7 @@ class BaseAgent(ABC):
         search and folds results back into the same response, so no
         client-side tool loop is needed here — the final text block already
         reflects what it found."""
+        self._last_llm_error = None
         sys_prompt = system if system is not None else self.system_prompt()
         if facts:
             facts_block = "\n".join(f"- {k}: {v}" for k, v in facts.items())
@@ -278,9 +282,27 @@ class BaseAgent(ABC):
             return "".join(
                 block.text for block in response.content if block.type == "text"
             ).strip()
-        except Exception:
+        except Exception as error:
             logger.exception("[%s] LLM call failed", self.role)
+            self._last_llm_error = self._public_llm_error(error)
             return ""
+
+    @staticmethod
+    def _public_llm_error(error: Exception) -> str:
+        """Return a safe, actionable error for chat without leaking secrets."""
+        status = getattr(error, "status_code", None)
+        code = f"ANTHROPIC_{status}" if isinstance(status, int) else "ANTHROPIC_UNAVAILABLE"
+        message = str(error).lower()
+
+        if status == 400 and "credit balance" in message:
+            detail = "Anthropic API credit balance is too low. Add API credits, then try again."
+        elif status in (401, 403):
+            detail = "Anthropic API authentication was rejected. Check the configured API key."
+        elif status == 429:
+            detail = "Anthropic rate limit reached. Please try again shortly."
+        else:
+            detail = "The language model request failed. Please try again shortly."
+        return f"⚠️ **{code}** — {detail}"
 
     async def dispatch_task(
         self,
@@ -342,7 +364,7 @@ class BaseAgent(ABC):
 
     # --- Default human message handler ---
 
-    async def respond_to_message(self, message: str) -> None:
+    async def respond_to_message(self, message: str, reply_channel: str | None = None) -> None:
         """Handle a human chat message (interrupt). Default: multi-turn with
         memory + durable facts. Fact extraction runs *after* the reply is
         sent, not before — it's a second LLM call, and the human shouldn't
@@ -354,7 +376,9 @@ class BaseAgent(ABC):
         reply = await self.ask_llm(message, history=history, facts=facts)
         if reply:
             await self.append_memory("user", message)
-            await self.announce(reply)
+            await self.announce(reply, channel=reply_channel)
+        elif self._last_llm_error:
+            await self.announce(self._last_llm_error, channel=reply_channel)
         await self.set_state("idle")
 
         if reply:
@@ -409,7 +433,7 @@ class BaseAgent(ABC):
                             if not content:
                                 continue
 
-                        await self._message_queue.put(content)
+                        await self._message_queue.put((content, msg_channel))
             except Exception:
                 logger.exception("[%s] chat listener dropped, reconnecting in 5s", self.role)
                 await asyncio.sleep(5)
@@ -436,7 +460,7 @@ class BaseAgent(ABC):
             try:
                 # Wait for either a human message or a bus message, with timeout
                 # If nothing arrives, run an autonomous cycle
-                message = None
+                message: tuple[str, str] | None = None
                 task = None
 
                 try:
@@ -447,7 +471,8 @@ class BaseAgent(ABC):
                     pass
 
                 if message is not None:
-                    await self.respond_to_message(message)
+                    content, reply_channel = message
+                    await self.respond_to_message(content, reply_channel=reply_channel)
                     continue
 
                 # Check bus inbox
