@@ -37,7 +37,6 @@ class TavilyMcpResearch:
                 async with streamable_http_client(TAVILY_MCP_URL, http_client=http) as (
                     read_stream,
                     write_stream,
-                    _,
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()

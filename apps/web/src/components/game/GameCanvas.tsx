@@ -106,7 +106,19 @@ interface NpcRuntime {
   target: { x: number; y: number };
   bobPhase: number;
   direction: SpriteDirection;
-  routineState?: AgentState;
+  routineKey?: string;
+}
+
+const FISH_DELIVERY_POSITION = { x: 76, y: 77 };
+
+function fishGatherPosition(index: number): OfficeStation {
+  const spots = [
+    { x: 69, y: 78 },
+    { x: 73, y: 83 },
+    { x: 79, y: 84 },
+    { x: 84, y: 79 },
+  ];
+  return spots[index % spots.length]!;
 }
 
 function officeLight(hour: number, mode: "auto" | "day" | "night"): "day" | "night" {
@@ -249,7 +261,7 @@ export function GameCanvas() {
         if (!liveIds.has(id)) npcRuntimeRef.current.delete(id);
       }
 
-      for (const agent of agentList) {
+      for (const [agentIndex, agent] of agentList.entries()) {
         let runtime = npcRuntimeRef.current.get(agent.id);
         if (!runtime) {
           const start = { ...OFFICE_STATIONS.entrance! };
@@ -263,9 +275,13 @@ export function GameCanvas() {
           npcRuntimeRef.current.set(agent.id, newRuntime);
         }
 
-        if (runtime.routineState !== agent.state) {
-          runtime.routineState = agent.state;
-          runtime.target = { ...OFFICE_STATIONS[STATE_STATION[agent.state]]! };
+        const fishDeliveryActive = officeEvent?.kind === "fish";
+        const routineKey = fishDeliveryActive ? `fish:${agentIndex}` : `state:${agent.state}`;
+        if (runtime.routineKey !== routineKey) {
+          runtime.routineKey = routineKey;
+          runtime.target = fishDeliveryActive
+            ? { ...fishGatherPosition(agentIndex) }
+            : { ...OFFICE_STATIONS[STATE_STATION[agent.state]]! };
         }
 
         const tdx = runtime.target.x - runtime.pos.x;
@@ -293,7 +309,7 @@ export function GameCanvas() {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [agentList]);
+  }, [agentList, officeEvent]);
 
   return (
     <div
@@ -329,6 +345,21 @@ export function GameCanvas() {
           <span className="office-snowflake left-[38%] [animation-delay:1.2s]">❄</span>
           <span className="office-snowflake left-[67%] [animation-delay:2.4s]">❄</span>
           <span className="office-snowflake left-[88%] [animation-delay:0.6s]">❄</span>
+        </div>
+      )}
+
+      {officeModeEnabled && officeEvent?.kind === "fish" && (
+        <div
+          aria-label="Fresh fish delivery"
+          className="office-fish-delivery pointer-events-none absolute"
+          style={{
+            left: `${FISH_DELIVERY_POSITION.x}%`,
+            top: `${FISH_DELIVERY_POSITION.y}%`,
+            zIndex: Math.round(FISH_DELIVERY_POSITION.y * 100),
+          }}
+        >
+          <img src="/sprites/fish-delivery.webp" alt="A cooler filled with fresh fish" />
+          <span>Fresh catch!</span>
         </div>
       )}
 
