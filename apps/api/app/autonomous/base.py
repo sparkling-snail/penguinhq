@@ -394,7 +394,22 @@ class BaseAgent(ABC):
                         msg_channel = payload.get("channel")
                         if msg_channel not in (self.chat_channel, "human"):
                             continue
-                        await self._message_queue.put(payload["content"])
+                        content = payload.get("content", "")
+
+                        # A message in #human can explicitly address one
+                        # agent, e.g. "@tech_scout Find recent AI releases".
+                        # Untagged messages preserve the existing broadcast
+                        # behavior, while tagged messages wake only the named
+                        # agent instead of making the whole office reply.
+                        if msg_channel == "human" and content.startswith("@"):
+                            target, separator, content = content.partition(" ")
+                            if not separator or target[1:].lower() != self.role.lower():
+                                continue
+                            content = content.strip()
+                            if not content:
+                                continue
+
+                        await self._message_queue.put(content)
             except Exception:
                 logger.exception("[%s] chat listener dropped, reconnecting in 5s", self.role)
                 await asyncio.sleep(5)

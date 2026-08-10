@@ -34,6 +34,7 @@ function officeReply(channel: string, content: string): ChatMessage {
 export function MessageComposer() {
   const activeChannelId = useChatStore((s) => s.activeChannelId);
   const addMessage = useChatStore((s) => s.addMessage);
+  const setActiveChannel = useChatStore((s) => s.setActiveChannel);
   const setAgents = useGameStore((s) => s.setAgents);
   const officeModeEnabled = useGameStore((s) => s.officeModeEnabled);
   const setOfficeModeEnabled = useGameStore((s) => s.setOfficeModeEnabled);
@@ -41,8 +42,56 @@ export function MessageComposer() {
   const [draft, setDraft] = useState("");
 
   const runCommand = async (input: string): Promise<boolean> => {
-    const [command = "", option] = input.toLowerCase().split(/\s+/, 2);
+    const [rawCommand = "", ...arguments_] = input.trim().split(/\s+/);
+    const command = rawCommand.toLowerCase();
+    const option = arguments_[0]?.toLowerCase();
     if (!command.startsWith("/")) return false;
+
+    if (command === "/ask") {
+      const [role = "", ...requestParts] = arguments_;
+      const request = requestParts.join(" ").trim();
+
+      if (!role || !request) {
+        addMessage(
+          officeReply(
+            activeChannelId,
+            "Usage: /ask <agent> <request>. Try /ask tech_scout Summarize this week's AI infrastructure news."
+          )
+        );
+        return true;
+      }
+
+      try {
+        const agents = await api.listAgents();
+        const agent = agents.find((candidate) => candidate.role.toLowerCase() === role.toLowerCase());
+        if (!agent) {
+          addMessage(
+            officeReply(
+              activeChannelId,
+              `I don't know an agent named “${role}”. Try /agents to see the roster.`
+            )
+          );
+          return true;
+        }
+
+        // All autonomous agents monitor #human. The @role prefix lets the
+        // backend deliver this message to exactly one of them.
+        setActiveChannel("human");
+        getPenguinSocket().send("chat.message", {
+          id: crypto.randomUUID(),
+          channel: "human",
+          authorId: "human",
+          authorName: "You",
+          authorColor: "#38bdf8",
+          content: `@${agent.role} ${request}`,
+          createdAt: new Date().toISOString(),
+        } satisfies ChatMessage);
+        addMessage(officeReply("human", `Asked ${agent.name}. They’ll reply here when ready.`));
+      } catch {
+        addMessage(officeReply(activeChannelId, "I couldn't reach the agent service. Please try again in a moment."));
+      }
+      return true;
+    }
 
     if (command === "/status") {
       try {
@@ -106,7 +155,7 @@ export function MessageComposer() {
       return true;
     }
 
-    addMessage(officeReply(activeChannelId, "Unknown command. Try /status, /agents, or /office [on|off|day|night|auto]."));
+    addMessage(officeReply(activeChannelId, "Unknown command. Try /ask <agent> <request>, /status, /agents, or /office [on|off|day|night|auto]."));
     return true;
   };
 
@@ -138,7 +187,7 @@ export function MessageComposer() {
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && void send()}
-        placeholder={`Message #${activeChannelId} — try /status`}
+        placeholder={`Message #${activeChannelId} — try /ask tech_scout <request>`}
         className="flex-1 rounded-md border border-penguin-border bg-white/5 px-3 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-penguin-accent"
       />
       <button
