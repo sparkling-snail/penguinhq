@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN playwright install --with-deps chromium
 
 # Source is bind-mounted over this in docker-compose.yml for hot reload;
 # COPY here so the image also works standalone (`docker run`).
