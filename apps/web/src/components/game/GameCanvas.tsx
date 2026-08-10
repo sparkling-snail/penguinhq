@@ -48,6 +48,18 @@ interface OfficeStation {
   y: number;
 }
 
+interface OfficeProp {
+  id: string;
+  name: string;
+  src: string;
+  defaultPosition: OfficeStation;
+  width: number;
+}
+
+interface PlacedOfficeProp extends OfficeStation {
+  width: number;
+}
+
 // These anchors correspond to places in the room art. Agent state remains
 // the source of truth; this is only the visual routine chosen for that state.
 const OFFICE_STATIONS: Record<string, OfficeStation> = {
@@ -62,7 +74,90 @@ const OFFICE_STATIONS: Record<string, OfficeStation> = {
   entrance: { x: 65, y: 58 },
 };
 
-const TECH_SCOUT_DESK_POSITION = OFFICE_STATIONS.library!;
+const PROP_POSITIONS_STORAGE_KEY = "penguinhq.office-prop-positions.v1";
+const PROP_DEFAULT_LAYOUT_STORAGE_KEY = "penguinhq.office-prop-default-layout.v1";
+const PROP_MIN_WIDTH = 6;
+const PROP_MAX_WIDTH = 30;
+const PROP_SIZE_STEP = 1.5;
+
+const OFFICE_PROPS: OfficeProp[] = [
+  {
+    id: "desk",
+    name: "Developer desk",
+    src: "/sprites/props/office-desk-v1.png",
+    defaultPosition: OFFICE_STATIONS.library!,
+    width: 17,
+  },
+  {
+    id: "research-workstation",
+    name: "Research workstation",
+    src: "/sprites/props/research-workstation.png",
+    defaultPosition: { x: 31, y: 63 },
+    width: 14,
+  },
+  {
+    id: "collaboration-table",
+    name: "Collaboration table",
+    src: "/sprites/props/collaboration-table.png",
+    defaultPosition: { x: 47, y: 78 },
+    width: 16,
+  },
+  {
+    id: "coffee-nook",
+    name: "Coffee nook",
+    src: "/sprites/props/coffee-nook.png",
+    defaultPosition: { x: 72, y: 62 },
+    width: 12,
+  },
+  {
+    id: "build-server-rack",
+    name: "Build server rack",
+    src: "/sprites/props/build-server-rack.png",
+    defaultPosition: { x: 83, y: 79 },
+    width: 12,
+  },
+  {
+    id: "planning-board",
+    name: "Planning board",
+    src: "/sprites/props/planning-board.png",
+    defaultPosition: { x: 54, y: 56 },
+    width: 11,
+  },
+  {
+    id: "nap-pod",
+    name: "Nap pod",
+    src: "/sprites/props/nap-pod.png",
+    defaultPosition: { x: 28, y: 84 },
+    width: 13,
+  },
+];
+
+function initialPropLayouts(): Record<string, PlacedOfficeProp> {
+  return Object.fromEntries(
+    OFFICE_PROPS.map((prop) => [prop.id, { ...prop.defaultPosition, width: prop.width }])
+  );
+}
+
+function mergePropLayouts(
+  base: Record<string, PlacedOfficeProp>,
+  saved: Record<string, Partial<PlacedOfficeProp>>
+): Record<string, PlacedOfficeProp> {
+  const merged = { ...base };
+  for (const prop of OFFICE_PROPS) {
+    const layout = saved[prop.id];
+    if (typeof layout?.x === "number" && typeof layout.y === "number") {
+      merged[prop.id] = {
+        x: clamp(layout.x, MARGIN_X, 100 - MARGIN_X),
+        y: clamp(layout.y, WALKABLE_MIN_Y, WALKABLE_MAX_Y),
+        width:
+          typeof layout.width === "number"
+            ? clamp(layout.width, PROP_MIN_WIDTH, PROP_MAX_WIDTH)
+            : base[prop.id]!.width,
+      };
+    }
+  }
+  return merged;
+}
 
 const STATE_STATION: Record<AgentState, keyof typeof OFFICE_STATIONS> = {
   idle: "cafe",
@@ -166,6 +261,7 @@ export function GameCanvas() {
   const playerRef = useRef<CharacterHandle>(null);
   const pressedRef = useRef<Set<string>>(new Set());
   const roomScaleRef = useRef(1);
+  const propDragRef = useRef<{ id: string; offset: OfficeStation } | null>(null);
 
   const playerPos = useRef({ x: 50, y: 80 });
   const playerDirection = useRef<SpriteDirection>("front-left");
@@ -177,6 +273,12 @@ export function GameCanvas() {
 
   const [hoveredPigeon, setHoveredPigeon] = useState<PigeonInFlight | null>(null);
   const [officeEvent, setOfficeEvent] = useState<OfficeEvent | null>(null);
+  const [propLayouts, setPropLayouts] = useState<Record<string, PlacedOfficeProp>>(initialPropLayouts);
+  const [savedDefaultLayouts, setSavedDefaultLayouts] =
+    useState<Record<string, PlacedOfficeProp>>(initialPropLayouts);
+  const [draggingPropId, setDraggingPropId] = useState<string | null>(null);
+  const [selectedPropId, setSelectedPropId] = useState<string | null>(null);
+  const [propPositionsLoaded, setPropPositionsLoaded] = useState(false);
   // Time is browser-local. Start neutral so server and client render the
   // same HTML, then adopt the local clock after hydration.
   const [clock, setClock] = useState<Date | null>(null);
@@ -203,6 +305,37 @@ export function GameCanvas() {
     const interval = window.setInterval(() => setClock(new Date()), 60_000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    try {
+      const initial = initialPropLayouts();
+      const savedDefaults = window.localStorage.getItem(PROP_DEFAULT_LAYOUT_STORAGE_KEY);
+      const defaults = savedDefaults
+        ? mergePropLayouts(initial, JSON.parse(savedDefaults) as Record<string, Partial<PlacedOfficeProp>>)
+        : initial;
+      const savedLayout = window.localStorage.getItem(PROP_POSITIONS_STORAGE_KEY);
+      const layout = savedLayout
+        ? mergePropLayouts(defaults, JSON.parse(savedLayout) as Record<string, Partial<PlacedOfficeProp>>)
+        : defaults;
+      // On first upgrade to saved defaults, keep the user's existing room
+      // arrangement as the new reset point instead of reverting it.
+      const defaultLayout = savedDefaults ? defaults : layout;
+      if (!savedDefaults) {
+        window.localStorage.setItem(PROP_DEFAULT_LAYOUT_STORAGE_KEY, JSON.stringify(defaultLayout));
+      }
+      setSavedDefaultLayouts(defaultLayout);
+      setPropLayouts(layout);
+    } catch {
+      // Ignore malformed local storage and use the default room layout.
+    } finally {
+      setPropPositionsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!propPositionsLoaded) return;
+    window.localStorage.setItem(PROP_POSITIONS_STORAGE_KEY, JSON.stringify(propLayouts));
+  }, [propLayouts, propPositionsLoaded]);
 
   // Characters are authored against the room image's native 1469px width.
   // ResizeObserver keeps their pixel dimensions in lockstep with the CSS
@@ -353,6 +486,74 @@ export function GameCanvas() {
     return () => cancelAnimationFrame(rafId);
   }, [agentList, officeEvent]);
 
+  const beginPropDrag = (event: React.PointerEvent<HTMLButtonElement>, prop: OfficeProp) => {
+    const room = roomRef.current;
+    const position = propLayouts[prop.id];
+    if (!room || !position) return;
+
+    const bounds = room.getBoundingClientRect();
+    propDragRef.current = {
+      id: prop.id,
+      offset: {
+        x: ((event.clientX - bounds.left) / bounds.width) * 100 - position.x,
+        y: ((event.clientY - bounds.top) / bounds.height) * 100 - position.y,
+      },
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDraggingPropId(prop.id);
+    setSelectedPropId(prop.id);
+  };
+
+  const moveProp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const room = roomRef.current;
+    const drag = propDragRef.current;
+    if (!room || !drag) return;
+
+    const bounds = room.getBoundingClientRect();
+    const pointerPosition = {
+      x: ((event.clientX - bounds.left) / bounds.width) * 100,
+      y: ((event.clientY - bounds.top) / bounds.height) * 100,
+    };
+    setPropLayouts((current) => ({
+      ...current,
+      [drag.id]: {
+        ...current[drag.id]!,
+        x: clamp(pointerPosition.x - drag.offset.x, MARGIN_X, 100 - MARGIN_X),
+        y: clamp(pointerPosition.y - drag.offset.y, WALKABLE_MIN_Y, WALKABLE_MAX_Y),
+      },
+    }));
+  };
+
+  const endPropDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    propDragRef.current = null;
+    setDraggingPropId(null);
+  };
+
+  const resetPropPositions = () => {
+    propDragRef.current = null;
+    setDraggingPropId(null);
+    setSelectedPropId(null);
+    setPropLayouts(savedDefaultLayouts);
+  };
+
+  const saveCurrentAsDefault = () => {
+    setSavedDefaultLayouts(propLayouts);
+    window.localStorage.setItem(PROP_DEFAULT_LAYOUT_STORAGE_KEY, JSON.stringify(propLayouts));
+  };
+
+  const resizeProp = (id: string, delta: number) => {
+    setPropLayouts((current) => ({
+      ...current,
+      [id]: {
+        ...current[id]!,
+        width: clamp(current[id]!.width + delta, PROP_MIN_WIDTH, PROP_MAX_WIDTH),
+      },
+    }));
+  };
+
   return (
     <div
       ref={roomRef}
@@ -365,18 +566,75 @@ export function GameCanvas() {
     >
       <Character ref={playerRef} name="Watty" sprite={{ type: "directional", base: "watty" }} />
 
-      <img
-        src="/sprites/props/office-desk-v1.png"
-        alt="Support desk"
-        draggable={false}
-        className="pointer-events-none absolute w-[17%] select-none"
-        style={{
-          left: `${TECH_SCOUT_DESK_POSITION.x}%`,
-          top: `${TECH_SCOUT_DESK_POSITION.y}%`,
-          zIndex: Math.round(TECH_SCOUT_DESK_POSITION.y * 100) - 1,
-          transform: "translate(-50%, -100%)",
-        }}
-      />
+      {OFFICE_PROPS.map((prop) => {
+        const layout = propLayouts[prop.id] ?? { ...prop.defaultPosition, width: prop.width };
+        const dragging = draggingPropId === prop.id;
+        const selected = selectedPropId === prop.id;
+        return (
+          <button
+            key={prop.id}
+            type="button"
+            aria-label={`Move ${prop.name}`}
+            title={`Drag to move ${prop.name}`}
+            onPointerDown={(event) => beginPropDrag(event, prop)}
+            onPointerMove={moveProp}
+            onPointerUp={endPropDrag}
+            onPointerCancel={endPropDrag}
+            className={`absolute touch-none select-none transition-[filter] ${
+              dragging
+                ? "cursor-grabbing brightness-110"
+                : selected
+                  ? "cursor-grab brightness-110 drop-shadow-[0_0_8px_rgba(125,211,252,0.85)]"
+                  : "cursor-grab hover:brightness-110"
+            }`}
+            style={{
+              left: `${layout.x}%`,
+              top: `${layout.y}%`,
+              width: `${layout.width}%`,
+              zIndex: Math.round(layout.y * 100) - 1,
+              transform: "translate(-50%, -100%)",
+            }}
+          >
+            <img src={prop.src} alt="" draggable={false} className="block h-auto w-full" />
+          </button>
+        );
+      })}
+
+      {selectedPropId && (() => {
+        const prop = OFFICE_PROPS.find((candidate) => candidate.id === selectedPropId);
+        const layout = prop ? propLayouts[prop.id] : undefined;
+        if (!prop || !layout) return null;
+        return (
+          <div
+            className="absolute z-[10050] flex items-center gap-1 rounded-md border border-sky-200/50 bg-slate-950/90 p-1 shadow-lg"
+            style={{
+              left: `${layout.x}%`,
+              top: `${Math.max(4, layout.y - 12)}%`,
+              transform: "translateX(-50%)",
+            }}
+          >
+            <button
+              type="button"
+              aria-label={`Make ${prop.name} smaller`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => resizeProp(prop.id, -PROP_SIZE_STEP)}
+              className="rounded px-2 py-0.5 text-sm font-bold text-slate-100 hover:bg-white/10"
+            >
+              −
+            </button>
+            <span className="max-w-28 truncate px-1 text-[10px] text-sky-100">{prop.name}</span>
+            <button
+              type="button"
+              aria-label={`Make ${prop.name} larger`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => resizeProp(prop.id, PROP_SIZE_STEP)}
+              className="rounded px-2 py-0.5 text-sm font-bold text-slate-100 hover:bg-white/10"
+            >
+              +
+            </button>
+          </div>
+        );
+      })()}
 
       {officeModeEnabled && (
         <div
@@ -446,8 +704,22 @@ export function GameCanvas() {
       ))}
 
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-black/40 px-2 py-1 text-xs text-slate-300">
-        WASD / arrow keys to move
+        WASD / arrow keys to move · Drag furniture to place it · Select furniture to resize
       </div>
+      <button
+        type="button"
+        onClick={resetPropPositions}
+        className="absolute bottom-3 right-3 rounded-md border border-white/15 bg-slate-950/70 px-2 py-1 text-xs text-slate-200 transition-colors hover:bg-slate-800"
+      >
+        Reset furniture
+      </button>
+      <button
+        type="button"
+        onClick={saveCurrentAsDefault}
+        className="absolute bottom-3 right-28 rounded-md border border-sky-200/30 bg-sky-950/70 px-2 py-1 text-xs text-sky-100 transition-colors hover:bg-sky-900"
+      >
+        Save as default
+      </button>
       {hoveredPigeon && <PigeonTooltip data={hoveredPigeon} />}
     </div>
   );
