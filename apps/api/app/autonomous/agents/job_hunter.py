@@ -85,8 +85,26 @@ class ApifyMcpLinkedInJobCollector:
         self.last_error: str | None = None
 
     @staticmethod
-    def _text(value: str | None) -> str:
-        return re.sub(r"\s+", " ", value or "").strip()
+    def _text(value: Any) -> str:
+        """Normalize scalar and structured fields returned by Apify actors."""
+        if value is None:
+            return ""
+        if isinstance(value, dict):
+            for key in ("text", "name", "title", "label", "value"):
+                if key in value:
+                    return ApifyMcpLinkedInJobCollector._text(value[key])
+            return " ".join(
+                part
+                for child in value.values()
+                if (part := ApifyMcpLinkedInJobCollector._text(child))
+            )
+        if isinstance(value, (list, tuple, set)):
+            return " ".join(
+                part
+                for child in value
+                if (part := ApifyMcpLinkedInJobCollector._text(child))
+            )
+        return re.sub(r"\s+", " ", str(value)).strip()
 
     async def collect(
         self,
@@ -129,19 +147,30 @@ class ApifyMcpLinkedInJobCollector:
                         result = await session.call_tool(actor_tool, arguments=payload)
                         items = self._job_items(result)
 
-                        # Actor calls may return only a preview. Apify exposes this
-                        # companion tool with the dataset ID when more data is available.
+                        # Actor calls can include an output-schema example whose values
+                        # are all literally "string". Prefer the run dataset whenever
+                        # the MCP response provides its ID.
                         dataset_id = self._find_dataset_id(result)
-                        output_tool = next(
-                            (tool.name for tool in tools if tool.name == "get-actor-output"),
-                            None,
-                        )
-                        if not items and dataset_id and output_tool:
-                            output = await session.call_tool(
-                                output_tool,
-                                arguments={"datasetId": dataset_id, "limit": limit},
+                        if not dataset_id:
+                            actor_id = APIFY_LINKEDIN_ACTOR.replace("/", "~")
+                            run_response = await http.get(
+                                f"https://api.apify.com/v2/acts/{actor_id}/runs/last",
+                                params={"status": "SUCCEEDED"},
                             )
-                            items = self._job_items(output)
+                            run_response.raise_for_status()
+                            run_data = run_response.json().get("data", {})
+                            dataset_id = run_data.get("defaultDatasetId")
+                        if dataset_id:
+                            response = await http.get(
+                                f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+                                params={"limit": limit, "clean": "true"},
+                            )
+                            response.raise_for_status()
+                            dataset_items = response.json()
+                            if isinstance(dataset_items, list):
+                                items = [item for item in dataset_items if isinstance(item, dict)]
+
+                        items = [item for item in items if not self._is_placeholder_item(item)]
         except Exception as exc:
             detail = re.sub(r"apify_api_[A-Za-z0-9]+", "[redacted]", str(exc)).strip()
             detail = detail.replace(token, "[redacted]")
@@ -190,7 +219,9 @@ class ApifyMcpLinkedInJobCollector:
                 return [item for child in value.values() for item in walk(child)]
             return []
 
-        structured = getattr(result, "structuredContent", None)
+        structured = getattr(result, "structured_content", None) or getattr(
+            result, "structuredContent", None
+        )
         items = walk(structured)
         if items:
             return items
@@ -210,7 +241,7 @@ class ApifyMcpLinkedInJobCollector:
     def _find_dataset_id(cls, result: Any) -> str | None:
         def find(value: Any) -> str | None:
             if isinstance(value, dict):
-                dataset_id = value.get("datasetId")
+                dataset_id = value.get("datasetId") or value.get("defaultDatasetId")
                 if isinstance(dataset_id, str):
                     return dataset_id
                 for child in value.values():
@@ -222,8 +253,34 @@ class ApifyMcpLinkedInJobCollector:
                         return found
             return None
 
-        structured = getattr(result, "structuredContent", None)
-        return find(structured)
+        structured = getattr(result, "structured_content", None) or getattr(
+            result, "structuredContent", None
+        )
+        if dataset_id := find(structured):
+            return dataset_id
+
+        for block in getattr(result, "content", []):
+            if getattr(block, "type", None) != "text":
+                continue
+            text = getattr(block, "text", "")
+            try:
+                if dataset_id := find(json.loads(text)):
+                    return dataset_id
+            except (TypeError, ValueError):
+                match = re.search(
+                    r'["\'](?:defaultDatasetId|datasetId)["\']\s*:\s*["\']([^"\']+)',
+                    text,
+                )
+                if match:
+                    return match.group(1)
+        return None
+
+    @staticmethod
+    def _is_placeholder_item(item: dict) -> bool:
+        identifying = ("id", "url", "title", "companyName", "location")
+        values = [str(item.get(key, "")).strip().lower() for key in identifying]
+        populated = [value for value in values if value]
+        return bool(populated) and all(value == "string" for value in populated)
 
     def _to_listing(self, item: dict) -> dict | None:
         source_job_id = str(item.get("id") or "").strip()
@@ -231,7 +288,9 @@ class ApifyMcpLinkedInJobCollector:
         if not source_job_id or not title:
             return None
 
-        description = self._text(item.get("description")) or _strip_html(item.get("descriptionHtml", ""))
+        description = self._text(item.get("description")) or _strip_html(
+            self._text(item.get("descriptionHtml"))
+        )
         required_years = [int(match) for match in _EXPERIENCE_YEARS_RE.findall(description)]
         if required_years and min(required_years) > MAX_EXPERIENCE_YEARS:
             return None
