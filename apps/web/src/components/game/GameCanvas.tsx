@@ -7,12 +7,12 @@ import { PigeonTooltip } from "./PigeonTooltip";
 import { useGameStore, type PigeonInFlight } from "@/stores/gameStore";
 import type { Agent, AgentState } from "@/types/agent";
 
-// Room art is a fixed 1469x1071 screenshot (club_penguin_office.png) —
+// Room art is a fixed 1470x1070 screenshot (club-penguin-office-open.png) —
 // everything below is a percentage of that box, the same coordinate
 // system Claude-Office uses for its office room, so nothing needs
 // recomputing on resize.
-const ROOM_ASPECT_RATIO = "1469 / 1071";
-const ROOM_ART_WIDTH = 1469;
+const ROOM_ASPECT_RATIO = "1470 / 1070";
+const ROOM_ART_WIDTH = 1470;
 const CHARACTER_SCALE_MULTIPLIER = 2;
 
 // The back wall (windows/door/water cooler) occupies roughly the top 44%
@@ -74,8 +74,11 @@ const OFFICE_STATIONS: Record<string, OfficeStation> = {
   entrance: { x: 65, y: 58 },
 };
 
-const PROP_POSITIONS_STORAGE_KEY = "penguinhq.office-prop-positions.v1";
-const PROP_DEFAULT_LAYOUT_STORAGE_KEY = "penguinhq.office-prop-default-layout.v1";
+// Version this whenever the committed furniture layout changes materially.
+// It prevents an outdated browser-saved arrangement (including old widths)
+// from overriding the current room art's tuned defaults after an update.
+const PROP_POSITIONS_STORAGE_KEY = "penguinhq.office-prop-positions.v2";
+const PROP_DEFAULT_LAYOUT_STORAGE_KEY = "penguinhq.office-prop-default-layout.v2";
 const PROP_MIN_WIDTH = 6;
 const PROP_MAX_WIDTH = 30;
 const PROP_SIZE_STEP = 1.5;
@@ -592,7 +595,7 @@ export function GameCanvas() {
       style={{
         aspectRatio: ROOM_ASPECT_RATIO,
         maxHeight: "100%",
-        backgroundImage: "url(/sprites/club-penguin-office.webp)",
+        backgroundImage: "url(/sprites/club-penguin-office-open.png)",
       }}
     >
       <Character
