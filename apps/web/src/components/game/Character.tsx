@@ -43,6 +43,9 @@ const SPRITE_HEIGHT = 74;
 // small horizontal correction keeps the flock pleasantly squat in the room
 // instead of making each penguin read as stretched vertically.
 const DIRECTIONAL_SPRITE_WIDTH_SCALE = 1.16;
+// Sitting art includes its own stool, so it needs a smaller footprint than
+// the standing pose to align with the stools built into the table prop.
+const SEATED_CHARACTER_SCALE = 0.78;
 // Furniture uses room-depth z-indexes below 10,000. Keep every character
 // above that layer while preserving depth ordering between penguins.
 const CHARACTER_Z_INDEX_BASE = 20_000;
@@ -57,6 +60,8 @@ const CHARACTER_BOX_WIDTH = 96;
 export interface CharacterHandle {
   /** x/y as percentages (0-100) of the room container. */
   setPosition(xPct: number, yPct: number): void;
+  /** Override room depth after positioning (used when furniture occludes a pose). */
+  setZIndex(zIndex: number): void;
   /** Idle-bob offset in px, applied every frame regardless of sprite mode. */
   setBob(offsetPx: number): void;
   /** Perspective scale, anchored to the character's feet. */
@@ -71,6 +76,7 @@ export interface CharacterProps {
   name: string;
   sprite: CharacterSprite;
   speech?: string;
+  showStatus?: boolean;
 }
 
 /**
@@ -83,7 +89,7 @@ export interface CharacterProps {
  * or a backend agent-state change) is React state.
  */
 export const Character = forwardRef<CharacterHandle, CharacterProps>(function Character(
-  { name, sprite, speech },
+  { name, sprite, speech, showStatus = true },
   ref
 ) {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -107,6 +113,7 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
   }, [sprite]);
 
   const initialSrc = sprite.type === "static" ? sprite.url : (directionalUrls as Record<SpriteDirection, string>)["front-left"];
+  const poseScale = sprite.type === "directional" && sprite.pose === "seated" ? SEATED_CHARACTER_SCALE : 1;
 
   useImperativeHandle(ref, () => ({
     setPosition(xPct, yPct) {
@@ -116,6 +123,10 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
       el.style.top = `${yPct}%`;
       el.style.zIndex = String(CHARACTER_Z_INDEX_BASE + Math.round(yPct * 100));
     },
+    setZIndex(zIndex) {
+      const el = wrapperRef.current;
+      if (el) el.style.zIndex = String(zIndex);
+    },
     setBob(offsetPx) {
       bobRef.current = offsetPx;
       applyTransform();
@@ -123,7 +134,7 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
     setScale(scale) {
       scaleRef.current = scale;
       const el = wrapperRef.current;
-      if (el) el.style.transform = `translate(-50%, -100%) scale(${scaleRef.current})`;
+      if (el) el.style.transform = `translate(-50%, -100%) scale(${scaleRef.current * poseScale})`;
     },
     setFacing(input) {
       if (sprite.type === "static") {
@@ -170,28 +181,32 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
           </div>
         )}
 
-        <span
-          className="absolute left-1/2 whitespace-nowrap text-[11px] text-slate-200"
-          style={{
-            bottom: SPRITE_HEIGHT + 10,
-            transform: "translateX(-50%)",
-            textShadow: "0 0 3px #0b1120, 0 0 3px #0b1120, 0 0 3px #0b1120",
-          }}
-        >
-          {name}
-        </span>
+        {showStatus && (
+          <>
+            <span
+              className="absolute left-1/2 whitespace-nowrap text-[11px] text-slate-200"
+              style={{
+                bottom: SPRITE_HEIGHT + 10,
+                transform: "translateX(-50%)",
+                textShadow: "0 0 3px #0b1120, 0 0 3px #0b1120, 0 0 3px #0b1120",
+              }}
+            >
+              {name}
+            </span>
 
-        <div
-          className="absolute left-1/2 rounded-full"
-          style={{
-            bottom: 2,
-            width: SPRITE_HEIGHT + 4,
-            height: SPRITE_HEIGHT + 4,
-            transform: "translateX(-50%)",
-            border: `2px solid ${STATE_RING_COLOR[state]}`,
-            opacity: 0.9,
-          }}
-        />
+            <div
+              className="absolute left-1/2 rounded-full"
+              style={{
+                bottom: 2,
+                width: SPRITE_HEIGHT + 4,
+                height: SPRITE_HEIGHT + 4,
+                transform: "translateX(-50%)",
+                border: `2px solid ${STATE_RING_COLOR[state]}`,
+                opacity: 0.9,
+              }}
+            />
+          </>
+        )}
 
         <div className="absolute bottom-0 left-1/2" style={{ height: SPRITE_HEIGHT, transform: "translateX(-50%)" }}>
           <img
@@ -209,10 +224,18 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
           />
         </div>
 
-        <div
-          className="absolute left-1/2 rounded-full bg-black/35"
-          style={{ bottom: -3, width: 32, height: 9, transform: "translateX(-50%)", filter: "blur(1px)" }}
-        />
+        {showStatus && (
+          <div
+            className="absolute left-1/2 rounded-full bg-black/35"
+            style={{
+              bottom: -3,
+              width: 32,
+              height: 9,
+              transform: "translateX(-50%)",
+              filter: "blur(1px)",
+            }}
+          />
+        )}
       </div>
     </div>
   );

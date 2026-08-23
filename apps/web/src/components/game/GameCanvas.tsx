@@ -13,6 +13,7 @@ import type { Agent, AgentState } from "@/types/agent";
 // recomputing on resize.
 const ROOM_ASPECT_RATIO = "1470 / 1070";
 const ROOM_ART_WIDTH = 1470;
+const ROOM_ART_HEIGHT = 1070;
 const CHARACTER_SCALE_MULTIPLIER = 2;
 
 // The back wall (windows/door/water cooler) occupies roughly the top 44%
@@ -54,11 +55,17 @@ interface OfficeProp {
   src: string;
   defaultPosition: OfficeStation;
   width: number;
+  /** Visual-only correction for props whose art needs to fit a room corner. */
+  renderScale?: number;
+  renderRotation?: number;
+  renderOffset?: { x: number; y: number };
 }
 
 interface PlacedOfficeProp extends OfficeStation {
   width: number;
 }
+
+type CoffeePhase = "approaching" | "grinding" | "pouring" | "sipping";
 
 // These anchors correspond to places in the room art. Agent state remains
 // the source of truth; this is only the visual routine chosen for that state.
@@ -115,9 +122,17 @@ const OFFICE_PROPS: OfficeProp[] = [
   {
     id: "build-server-rack",
     name: "Build server rack",
-    src: "/sprites/props/build-server-rack.png",
+    src: "/sprites/props/build-server-rack-replacement.png",
     defaultPosition: { x: 89.61461871603262, y: 79.90999097288956 },
     width: 22.5,
+    // A full-width rack overwhelms the right corner. Keep the editor's
+    // logical width intact but render a narrower cabinet turned into the
+    // right wall, so saved layouts remain compatible.
+    renderScale: 0.82,
+    renderRotation: 0,
+    // Offset is relative to the prop's own size, so it continues to fit the
+    // corner as the responsive office frame changes size.
+    renderOffset: { x: 22, y: -10 },
   },
   {
     id: "planning-board",
@@ -228,12 +243,37 @@ interface NpcRuntime {
 const FISH_DELIVERY_POSITION = { x: 76, y: 77 };
 
 const SEATED_DIRECTIONS: SpriteDirection[] = [
-  "front-left",
   "front-right",
-  "rear-left",
-  "rear-right",
   "front-left",
+  "front-left",
+  "rear-right",
+  "rear-left",
 ];
+
+// The table prop is a square transparent image whose visible furniture sits
+// inside its canvas. These are the actual stool/edge anchors measured from
+// that image's bottom-centre origin, expressed as fractions of its width.
+// Keeping them relative to `width` means seating remains correct after the
+// user moves or resizes the table.
+const TABLE_SEAT_ANCHORS = [
+  { x: -0.34, y: -0.27 }, // left coral stool
+  { x: 0, y: -0.14 }, // front aqua stool
+  { x: 0.34, y: -0.27 }, // right yellow stool
+  { x: -0.19, y: -0.32 }, // rear-left table edge
+  { x: 0.19, y: -0.32 }, // rear-right table edge
+] as const;
+
+// Prop widths are percentages of the room's width, while `top` is a
+// percentage of its height. Convert vertical offsets measured from a square
+// prop image before adding them to a room-space y coordinate; without this,
+// seats drift down onto the tabletop in our non-square 1470x1070 room.
+const PROP_WIDTH_TO_ROOM_Y = ROOM_ART_WIDTH / ROOM_ART_HEIGHT;
+
+// The pod image is positioned from its bottom-centre. This anchor lands
+// Watty's feet on the mattress, inside the open doorway, and scales with
+// the prop when the user resizes it.
+const NAP_POD_SLEEP_ANCHOR = { x: 0.02, y: -0.27 } as const;
+const COFFEE_MAKER_ANCHOR = { x: 0.06, y: 0.03 } as const;
 
 function fishGatherPosition(index: number): OfficeStation {
   const spots = [
@@ -290,6 +330,8 @@ export function GameCanvas() {
   const [draggingPropId, setDraggingPropId] = useState<string | null>(null);
   const [selectedPropId, setSelectedPropId] = useState<string | null>(null);
   const [flockSeated, setFlockSeated] = useState(false);
+  const [playerSleeping, setPlayerSleeping] = useState(false);
+  const [coffeePhase, setCoffeePhase] = useState<CoffeePhase | null>(null);
   const [propPositionsLoaded, setPropPositionsLoaded] = useState(false);
   // Time is browser-local. Start neutral so server and client render the
   // same HTML, then adopt the local clock after hydration.
@@ -312,18 +354,53 @@ export function GameCanvas() {
 
   const light = officeLight(clock?.getHours() ?? 12, officeTimeMode);
   const collaborationTable = propLayouts["collaboration-table"];
+  const napPod = propLayouts["nap-pod"];
+  const coffeeNook = propLayouts["coffee-nook"];
+
+  const seatedZIndex = (index: number): number => {
+    const table = collaborationTable ?? { x: 59, y: 91, width: 25 };
+    const tableZIndex = Math.round(table.y * 100) - 1;
+    // The two rear seats belong behind the tabletop; the three visible
+    // stools are in front of it. A split depth makes the same seated art
+    // read correctly on either side of the furniture.
+    return index >= 3 ? tableZIndex + 1 : tableZIndex + 3;
+  };
 
   const seatedPosition = (index: number): OfficeStation => {
-    const table = collaborationTable ?? { x: 47, y: 78, width: 16 };
-    const seats = [
-      { x: table.x - 8, y: table.y + 5 },
-      { x: table.x + 8, y: table.y + 5 },
-      { x: table.x - 8, y: table.y - 3 },
-      { x: table.x + 8, y: table.y - 3 },
-      { x: table.x, y: table.y + 9 },
-    ];
-    return seats[index % seats.length]!;
+    const table = collaborationTable ?? { x: 59, y: 91, width: 25 };
+    const anchor = TABLE_SEAT_ANCHORS[index % TABLE_SEAT_ANCHORS.length]!;
+    return {
+      x: table.x + table.width * anchor.x,
+      y: table.y + table.width * anchor.y * PROP_WIDTH_TO_ROOM_Y,
+    };
   };
+
+  const sleepingPosition = (): OfficeStation => {
+    const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
+    return {
+      x: pod.x + pod.width * NAP_POD_SLEEP_ANCHOR.x,
+      y: pod.y + pod.width * NAP_POD_SLEEP_ANCHOR.y * PROP_WIDTH_TO_ROOM_Y,
+    };
+  };
+
+  const coffeeMakerPosition = (): OfficeStation => {
+    const nook = coffeeNook ?? { x: 75.7, y: 67.1, width: 22.5 };
+    return {
+      x: nook.x + nook.width * COFFEE_MAKER_ANCHOR.x,
+      y: nook.y + nook.width * COFFEE_MAKER_ANCHOR.y,
+    };
+  };
+
+  useEffect(() => {
+    if (coffeePhase !== "grinding" && coffeePhase !== "pouring" && coffeePhase !== "sipping") return;
+    const delay = coffeePhase === "grinding" ? 1_450 : coffeePhase === "pouring" ? 1_350 : 2_400;
+    const timer = window.setTimeout(() => {
+      setCoffeePhase((phase) =>
+        phase === "grinding" ? "pouring" : phase === "pouring" ? "sipping" : null
+      );
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [coffeePhase]);
 
   useEffect(() => {
     setClock(new Date());
@@ -430,10 +507,38 @@ export function GameCanvas() {
       if (pressed.has("a") || pressed.has("arrowleft")) dx -= 1;
       if (pressed.has("d") || pressed.has("arrowright")) dx += 1;
 
-      const playerMoving = !flockSeated && (dx !== 0 || dy !== 0);
-      playerRef.current?.setState(flockSeated ? "meeting" : playerMoving ? "walking" : "idle");
+      if (coffeePhase && (dx !== 0 || dy !== 0)) setCoffeePhase(null);
+      const walkingToCoffee = coffeePhase === "approaching";
+      const playerMoving = !flockSeated && !playerSleeping && !walkingToCoffee && (dx !== 0 || dy !== 0);
+      playerRef.current?.setState(
+        playerSleeping
+          ? "sleeping"
+          : flockSeated
+            ? "meeting"
+            : walkingToCoffee
+              ? "walking"
+              : coffeePhase
+                ? "waiting"
+                : playerMoving
+                  ? "walking"
+                  : "idle"
+      );
 
-      if (playerMoving) {
+      if (walkingToCoffee) {
+        const target = coffeeMakerPosition();
+        const cdx = target.x - playerPos.current.x;
+        const cdy = target.y - playerPos.current.y;
+        const distance = Math.sqrt(cdx * cdx + cdy * cdy);
+        if (distance < 0.45) {
+          playerPos.current = target;
+          playerDirection.current = "rear-left";
+          setCoffeePhase("grinding");
+        } else {
+          playerPos.current.x += (cdx / distance) * PLAYER_SPEED * delta;
+          playerPos.current.y += (cdy / distance) * PLAYER_SPEED * delta;
+          playerDirection.current = getDirectionFromDelta(cdx, cdy);
+        }
+      } else if (playerMoving) {
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
         playerPos.current.x = clamp(
           playerPos.current.x + (dx / len) * PLAYER_SPEED * delta,
@@ -449,11 +554,20 @@ export function GameCanvas() {
       }
 
       playerBobPhase.current += delta * 0.08;
-      const playerDisplayPosition = flockSeated ? seatedPosition(4) : playerPos.current;
+      const playerDisplayPosition = playerSleeping
+        ? sleepingPosition()
+        : flockSeated
+          ? seatedPosition(4)
+          : playerPos.current;
       playerRef.current?.setPosition(playerDisplayPosition.x, playerDisplayPosition.y);
-      playerRef.current?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
-      playerRef.current?.setBob(Math.sin(playerBobPhase.current) * 1.5);
-      playerRef.current?.setFacing(playerDirection.current);
+      if (flockSeated) playerRef.current?.setZIndex(seatedZIndex(4));
+      playerRef.current?.setScale(
+        roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER * (playerSleeping ? 0.62 : 1)
+      );
+      playerRef.current?.setBob(playerSleeping ? 0 : Math.sin(playerBobPhase.current) * 1.5);
+      playerRef.current?.setFacing(
+        playerSleeping ? false : coffeePhase && coffeePhase !== "approaching" ? "rear-left" : playerDirection.current
+      );
 
       // --- Agents: state-driven office routines ---
       const liveIds = new Set(agentList.map((a) => a.id));
@@ -505,6 +619,7 @@ export function GameCanvas() {
 
         const handle = npcHandlesRef.current.get(agent.id);
         handle?.setPosition(runtime.pos.x, runtime.pos.y);
+        if (flockSeated) handle?.setZIndex(seatedZIndex(agentIndex));
         handle?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
         handle?.setBob(flockSeated ? 0 : Math.sin(runtime.bobPhase) * 1.5);
         handle?.setFacing(flockSeated ? SEATED_DIRECTIONS[agentIndex % SEATED_DIRECTIONS.length]! : runtime.direction);
@@ -518,7 +633,7 @@ export function GameCanvas() {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [agentList, officeEvent, flockSeated, collaborationTable]);
+  }, [agentList, officeEvent, flockSeated, playerSleeping, coffeePhase, collaborationTable, napPod, coffeeNook]);
 
   const beginPropDrag = (event: React.PointerEvent<HTMLButtonElement>, prop: OfficeProp) => {
     const room = roomRef.current;
@@ -601,7 +716,25 @@ export function GameCanvas() {
       <Character
         ref={playerRef}
         name="Watty"
-        sprite={{ type: "directional", base: "watty", pose: flockSeated ? "seated" : "standing" }}
+        speech={
+          playerSleeping
+            ? "Zzz…"
+            : coffeePhase === "approaching"
+              ? "Coffee time!"
+              : coffeePhase === "grinding"
+                ? "Grinding beans…"
+                : coffeePhase === "pouring"
+                  ? "Steady pour…"
+                  : coffeePhase === "sipping"
+                    ? "Ahh, perfect."
+                    : undefined
+        }
+        showStatus={!playerSleeping && !flockSeated}
+        sprite={
+          playerSleeping
+            ? { type: "static", url: "/sprites/agents/watty-sleeping.png" }
+            : { type: "directional", base: "watty", pose: flockSeated ? "seated" : "standing" }
+        }
       />
 
       {OFFICE_PROPS.map((prop) => {
@@ -630,13 +763,38 @@ export function GameCanvas() {
               top: `${layout.y}%`,
               width: `${layout.width}%`,
               zIndex: Math.round(layout.y * 100) - 1,
-              transform: "translate(-50%, -100%)",
+              transform: `translate(-50%, -100%) translate(${prop.renderOffset?.x ?? 0}%, ${prop.renderOffset?.y ?? 0}%) rotate(${prop.renderRotation ?? 0}deg) scale(${prop.renderScale ?? 1})`,
             }}
           >
             <img src={prop.src} alt="" draggable={false} className="block h-auto w-full" />
           </button>
         );
       })}
+
+      {flockSeated && collaborationTable && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute select-none"
+          style={{
+            left: `${collaborationTable.x}%`,
+            top: `${collaborationTable.y}%`,
+            width: `${collaborationTable.width}%`,
+            zIndex: Math.round(collaborationTable.y * 100) + 1,
+            transform: "translate(-50%, -100%)",
+            // Repaint only the tabletop over the rear sitters. The base prop
+            // remains behind every penguin, and front sitters remain above
+            // this layer, producing the missing foreground/background split.
+            clipPath: "inset(54% 8% 34% 8%)",
+          }}
+        >
+          <img
+            src="/sprites/props/collaboration-table.png"
+            alt=""
+            draggable={false}
+            className="block h-auto w-full"
+          />
+        </div>
+      )}
 
       {selectedPropId && (() => {
         const prop = OFFICE_PROPS.find((candidate) => candidate.id === selectedPropId);
@@ -674,15 +832,63 @@ export function GameCanvas() {
               <button
                 type="button"
                 onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => setFlockSeated((seated) => !seated)}
+                onClick={() => {
+                  setPlayerSleeping(false);
+                  setCoffeePhase(null);
+                  setFlockSeated((seated) => !seated);
+                }}
                 className="ml-1 rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-semibold text-sky-100 hover:bg-sky-400/30"
               >
                 {flockSeated ? "Stand flock" : "Seat flock"}
               </button>
             )}
+            {prop.id === "nap-pod" && (
+              <button
+                type="button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => {
+                  setFlockSeated(false);
+                  setCoffeePhase(null);
+                  setPlayerSleeping((sleeping) => !sleeping);
+                }}
+                className="ml-1 rounded bg-indigo-500/25 px-2 py-0.5 text-[10px] font-semibold text-indigo-100 hover:bg-indigo-400/35"
+              >
+                {playerSleeping ? "Wake Watty" : "Sleep Watty"}
+              </button>
+            )}
+            {prop.id === "coffee-nook" && (
+              <button
+                type="button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => {
+                  setFlockSeated(false);
+                  setPlayerSleeping(false);
+                  setCoffeePhase((phase) => (phase ? null : "approaching"));
+                }}
+                className="ml-1 rounded bg-amber-500/25 px-2 py-0.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-400/35"
+              >
+                {coffeePhase ? "Cancel coffee" : "Make coffee"}
+              </button>
+            )}
           </div>
         );
       })()}
+
+      {coffeePhase && coffeePhase !== "approaching" && coffeeNook && (
+        <div
+          aria-label={`Coffee is ${coffeePhase}`}
+          className={`office-coffee-action office-coffee-action--${coffeePhase} pointer-events-none absolute`}
+          style={{
+            left: `${coffeeNook.x + coffeeNook.width * 0.08}%`,
+            top: `${coffeeNook.y - coffeeNook.width * 0.43}%`,
+            zIndex: Math.round(coffeeNook.y * 100) + 20_000,
+          }}
+        >
+          <span className="office-coffee-cup">☕</span>
+          <span className="office-coffee-steam">〰</span>
+          <span className="office-coffee-spark">✦</span>
+        </div>
+      )}
 
       {officeModeEnabled && (
         <div
@@ -796,6 +1002,7 @@ function AgentCharacter({
       name={agent.name}
       sprite={{ type: "directional", base: spriteBase, pose: seated ? "seated" : "standing" }}
       speech={speech}
+      showStatus={!seated}
     />
   );
 }
