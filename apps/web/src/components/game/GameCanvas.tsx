@@ -242,26 +242,37 @@ interface NpcRuntime {
 
 const FISH_DELIVERY_POSITION = { x: 76, y: 77 };
 
-const SEATED_DIRECTIONS: SpriteDirection[] = [
-  "front-right",
-  "front-left",
-  "front-left",
-  "rear-right",
-  "rear-left",
-];
+type TableMeetingSlot = {
+  /** Anchor measured from the collaboration prop's bottom-centre origin. */
+  x: number;
+  y: number;
+  direction: SpriteDirection;
+  /** Sitting is only valid where the furniture has an actual stool. */
+  pose: "seated" | "standing";
+  /** Rear attendees must be occluded by the table, like a real game scene. */
+  depth: "front" | "rear";
+};
 
-// The table prop is a square transparent image whose visible furniture sits
-// inside its canvas. These are the actual stool/edge anchors measured from
-// that image's bottom-centre origin, expressed as fractions of its width.
-// Keeping them relative to `width` means seating remains correct after the
-// user moves or resizes the table.
-const TABLE_SEAT_ANCHORS = [
-  { x: -0.34, y: -0.27 }, // left coral stool
-  { x: 0, y: -0.14 }, // front aqua stool
-  { x: 0.34, y: -0.27 }, // right yellow stool
-  { x: -0.19, y: -0.32 }, // rear-left table edge
-  { x: 0.19, y: -0.32 }, // rear-right table edge
+// A table should model capacity, rather than forcing every nearby character
+// into a generic "seated" pose. This prop has exactly three visible stools:
+// left coral, front aqua, and right yellow. The remaining two flock members
+// take standing discussion slots behind the tabletop, where the furniture
+// naturally occludes their lower bodies.
+//
+// Every point is local to the prop's bottom-centre origin and scales with its
+// width, so moving/resizing the furniture cannot break the meeting formation.
+const TABLE_MEETING_SLOTS: readonly TableMeetingSlot[] = [
+  { x: -0.294, y: -0.237, direction: "front-right", pose: "seated", depth: "front" },
+  { x: 0, y: -0.127, direction: "front-left", pose: "seated", depth: "front" },
+  { x: 0.303, y: -0.237, direction: "front-left", pose: "seated", depth: "front" },
+  { x: -0.19, y: -0.49, direction: "rear-right", pose: "standing", depth: "rear" },
+  { x: 0.19, y: -0.49, direction: "rear-left", pose: "standing", depth: "rear" },
 ] as const;
+
+// Watty owns the central chair. The four specialists take the left, right,
+// then rear discussion positions in stable agent-list order.
+const AGENT_TABLE_SLOT_INDICES = [0, 2, 3, 4] as const;
+const WATTY_TABLE_SLOT_INDEX = 1;
 
 // Prop widths are percentages of the room's width, while `top` is a
 // percentage of its height. Convert vertical offsets measured from a square
@@ -357,18 +368,18 @@ export function GameCanvas() {
   const napPod = propLayouts["nap-pod"];
   const coffeeNook = propLayouts["coffee-nook"];
 
-  const seatedZIndex = (index: number): number => {
+  const tableMeetingSlot = (slotIndex: number): TableMeetingSlot =>
+    TABLE_MEETING_SLOTS[slotIndex % TABLE_MEETING_SLOTS.length]!;
+
+  const tableMeetingZIndex = (slotIndex: number): number => {
     const table = collaborationTable ?? { x: 59, y: 91, width: 25 };
     const tableZIndex = Math.round(table.y * 100) - 1;
-    // The two rear seats belong behind the tabletop; the three visible
-    // stools are in front of it. A split depth makes the same seated art
-    // read correctly on either side of the furniture.
-    return index >= 3 ? tableZIndex + 1 : tableZIndex + 3;
+    return tableMeetingSlot(slotIndex).depth === "rear" ? tableZIndex - 2 : tableZIndex + 3;
   };
 
-  const seatedPosition = (index: number): OfficeStation => {
+  const tableMeetingPosition = (slotIndex: number): OfficeStation => {
     const table = collaborationTable ?? { x: 59, y: 91, width: 25 };
-    const anchor = TABLE_SEAT_ANCHORS[index % TABLE_SEAT_ANCHORS.length]!;
+    const anchor = tableMeetingSlot(slotIndex);
     return {
       x: table.x + table.width * anchor.x,
       y: table.y + table.width * anchor.y * PROP_WIDTH_TO_ROOM_Y,
@@ -557,10 +568,10 @@ export function GameCanvas() {
       const playerDisplayPosition = playerSleeping
         ? sleepingPosition()
         : flockSeated
-          ? seatedPosition(4)
+          ? tableMeetingPosition(WATTY_TABLE_SLOT_INDEX)
           : playerPos.current;
       playerRef.current?.setPosition(playerDisplayPosition.x, playerDisplayPosition.y);
-      if (flockSeated) playerRef.current?.setZIndex(seatedZIndex(4));
+      if (flockSeated) playerRef.current?.setZIndex(tableMeetingZIndex(WATTY_TABLE_SLOT_INDEX));
       playerRef.current?.setScale(
         roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER * (playerSleeping ? 0.62 : 1)
       );
@@ -576,6 +587,7 @@ export function GameCanvas() {
       }
 
       for (const [agentIndex, agent] of agentList.entries()) {
+        const tableSlotIndex = AGENT_TABLE_SLOT_INDICES[agentIndex % AGENT_TABLE_SLOT_INDICES.length]!;
         let runtime = npcRuntimeRef.current.get(agent.id);
         if (!runtime) {
           const start = { ...OFFICE_STATIONS.entrance! };
@@ -598,7 +610,7 @@ export function GameCanvas() {
         if (runtime.routineKey !== routineKey) {
           runtime.routineKey = routineKey;
           runtime.target = flockSeated
-            ? seatedPosition(agentIndex)
+            ? tableMeetingPosition(tableSlotIndex)
             : fishDeliveryActive
               ? { ...fishGatherPosition(agentIndex) }
               : stationForAgent(agent);
@@ -619,10 +631,10 @@ export function GameCanvas() {
 
         const handle = npcHandlesRef.current.get(agent.id);
         handle?.setPosition(runtime.pos.x, runtime.pos.y);
-        if (flockSeated) handle?.setZIndex(seatedZIndex(agentIndex));
+        if (flockSeated) handle?.setZIndex(tableMeetingZIndex(tableSlotIndex));
         handle?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
         handle?.setBob(flockSeated ? 0 : Math.sin(runtime.bobPhase) * 1.5);
-        handle?.setFacing(flockSeated ? SEATED_DIRECTIONS[agentIndex % SEATED_DIRECTIONS.length]! : runtime.direction);
+        handle?.setFacing(flockSeated ? tableMeetingSlot(tableSlotIndex).direction : runtime.direction);
         // Ring color reflects the agent's real backend state (idle,
         // coding, blocked, ...) rather than the cosmetic wander AI above.
         handle?.setState(flockSeated ? "meeting" : distance >= 0.5 ? "walking" : agent.state);
@@ -733,7 +745,13 @@ export function GameCanvas() {
         sprite={
           playerSleeping
             ? { type: "static", url: "/sprites/agents/watty-sleeping.png" }
-            : { type: "directional", base: "watty", pose: flockSeated ? "seated" : "standing" }
+            : {
+                type: "directional",
+                base: "watty",
+                pose: flockSeated && tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).pose === "seated"
+                  ? "seated"
+                  : "standing",
+              }
         }
       />
 
@@ -770,31 +788,6 @@ export function GameCanvas() {
           </button>
         );
       })}
-
-      {flockSeated && collaborationTable && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute select-none"
-          style={{
-            left: `${collaborationTable.x}%`,
-            top: `${collaborationTable.y}%`,
-            width: `${collaborationTable.width}%`,
-            zIndex: Math.round(collaborationTable.y * 100) + 1,
-            transform: "translate(-50%, -100%)",
-            // Repaint only the tabletop over the rear sitters. The base prop
-            // remains behind every penguin, and front sitters remain above
-            // this layer, producing the missing foreground/background split.
-            clipPath: "inset(54% 8% 34% 8%)",
-          }}
-        >
-          <img
-            src="/sprites/props/collaboration-table.png"
-            alt=""
-            draggable={false}
-            className="block h-auto w-full"
-          />
-        </div>
-      )}
 
       {selectedPropId && (() => {
         const prop = OFFICE_PROPS.find((candidate) => candidate.id === selectedPropId);
@@ -933,6 +926,7 @@ export function GameCanvas() {
 
       {agentList.map((agent, i) => {
         const liveSpeech = agentSpeech[agent.id];
+        const tableSlotIndex = AGENT_TABLE_SLOT_INDICES[i % AGENT_TABLE_SLOT_INDICES.length]!;
         const speech =
           liveSpeech && liveSpeech.expiresAt > (clock?.getTime() ?? 0)
             ? liveSpeech.text
@@ -942,7 +936,8 @@ export function GameCanvas() {
           key={agent.id}
           agent={agent}
           spriteBase={AGENT_SPRITE_BASES[i % AGENT_SPRITE_BASES.length]!}
-          seated={flockSeated}
+          seated={flockSeated && tableMeetingSlot(tableSlotIndex).pose === "seated"}
+          inMeeting={flockSeated}
           speech={speech}
           onHandle={(h) => npcHandlesRef.current.set(agent.id, h)}
         />
@@ -987,12 +982,14 @@ function AgentCharacter({
   agent,
   spriteBase,
   seated,
+  inMeeting,
   speech,
   onHandle,
 }: {
   agent: Agent;
   spriteBase: string;
   seated: boolean;
+  inMeeting: boolean;
   speech?: string;
   onHandle: (handle: CharacterHandle | null) => void;
 }) {
@@ -1002,7 +999,7 @@ function AgentCharacter({
       name={agent.name}
       sprite={{ type: "directional", base: spriteBase, pose: seated ? "seated" : "standing" }}
       speech={speech}
-      showStatus={!seated}
+      showStatus={!inMeeting}
     />
   );
 }
