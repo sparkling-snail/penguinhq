@@ -14,7 +14,9 @@ export type SpriteDirection = "front-left" | "front-right" | "rear-left" | "rear
  *    `{base}-{direction}.webp`), swapped based on movement direction
  *    instead of flipped, matching Claude-Office's actual convention.
  */
-export type CharacterSprite = { type: "static"; url: string } | { type: "directional"; base: string };
+export type CharacterSprite =
+  | { type: "static"; url: string }
+  | { type: "directional"; base: string; pose?: "standing" | "seated" };
 
 const STATE_RING_COLOR: Record<AgentState, string> = {
   idle: "#64748b",
@@ -36,6 +38,11 @@ const STATE_RING_COLOR: Record<AgentState, string> = {
 };
 
 const SPRITE_HEIGHT = 74;
+// The regenerated directional art sits on a square canvas but its visible
+// character silhouette is slightly narrower than the original sprites. A
+// small horizontal correction keeps the flock pleasantly squat in the room
+// instead of making each penguin read as stretched vertically.
+const DIRECTIONAL_SPRITE_WIDTH_SCALE = 1.16;
 // Furniture uses room-depth z-indexes below 10,000. Keep every character
 // above that layer while preserving depth ordering between penguins.
 const CHARACTER_Z_INDEX_BASE = 20_000;
@@ -90,11 +97,12 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
   const directionalUrls = useMemo(() => {
     if (sprite.type !== "directional") return null;
     const base = sprite.base;
+    const poseSuffix = sprite.pose === "seated" ? "-seated" : "";
     return {
-      "front-left": `/sprites/agents/${base}-front-left.webp`,
-      "front-right": `/sprites/agents/${base}-front-right.webp`,
-      "rear-left": `/sprites/agents/${base}-rear-left.webp`,
-      "rear-right": `/sprites/agents/${base}-rear-right.webp`,
+      "front-left": `/sprites/agents/${base}${poseSuffix}-front-left.${sprite.pose === "seated" ? "png" : "webp"}`,
+      "front-right": `/sprites/agents/${base}${poseSuffix}-front-right.${sprite.pose === "seated" ? "png" : "webp"}`,
+      "rear-left": `/sprites/agents/${base}${poseSuffix}-rear-left.${sprite.pose === "seated" ? "png" : "webp"}`,
+      "rear-right": `/sprites/agents/${base}${poseSuffix}-rear-right.${sprite.pose === "seated" ? "png" : "webp"}`,
     } satisfies Record<SpriteDirection, string>;
   }, [sprite]);
 
@@ -137,7 +145,8 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
   function applyTransform() {
     const img = spriteRef.current;
     if (!img) return;
-    img.style.transform = `translateY(${bobRef.current}px) scaleX(${flippedRef.current ? -1 : 1})`;
+    const horizontalScale = sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1;
+    img.style.transform = `translateY(${bobRef.current}px) scaleX(${(flippedRef.current ? -1 : 1) * horizontalScale})`;
   }
 
   return (
@@ -191,6 +200,12 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
             alt={name}
             draggable={false}
             className="h-full w-auto select-none"
+            style={{
+              transformOrigin: "bottom center",
+              // The initial render has no movement tick yet, so apply the
+              // directional width correction here as well.
+              transform: `scaleX(${sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1})`,
+            }}
           />
         </div>
 

@@ -224,6 +224,14 @@ interface NpcRuntime {
 
 const FISH_DELIVERY_POSITION = { x: 76, y: 77 };
 
+const SEATED_DIRECTIONS: SpriteDirection[] = [
+  "front-left",
+  "front-right",
+  "rear-left",
+  "rear-right",
+  "front-left",
+];
+
 function fishGatherPosition(index: number): OfficeStation {
   const spots = [
     { x: 69, y: 78 },
@@ -278,6 +286,7 @@ export function GameCanvas() {
     useState<Record<string, PlacedOfficeProp>>(initialPropLayouts);
   const [draggingPropId, setDraggingPropId] = useState<string | null>(null);
   const [selectedPropId, setSelectedPropId] = useState<string | null>(null);
+  const [flockSeated, setFlockSeated] = useState(false);
   const [propPositionsLoaded, setPropPositionsLoaded] = useState(false);
   // Time is browser-local. Start neutral so server and client render the
   // same HTML, then adopt the local clock after hydration.
@@ -299,6 +308,19 @@ export function GameCanvas() {
   );
 
   const light = officeLight(clock?.getHours() ?? 12, officeTimeMode);
+  const collaborationTable = propLayouts["collaboration-table"];
+
+  const seatedPosition = (index: number): OfficeStation => {
+    const table = collaborationTable ?? { x: 47, y: 78, width: 16 };
+    const seats = [
+      { x: table.x - 8, y: table.y + 5 },
+      { x: table.x + 8, y: table.y + 5 },
+      { x: table.x - 8, y: table.y - 3 },
+      { x: table.x + 8, y: table.y - 3 },
+      { x: table.x, y: table.y + 9 },
+    ];
+    return seats[index % seats.length]!;
+  };
 
   useEffect(() => {
     setClock(new Date());
@@ -405,8 +427,8 @@ export function GameCanvas() {
       if (pressed.has("a") || pressed.has("arrowleft")) dx -= 1;
       if (pressed.has("d") || pressed.has("arrowright")) dx += 1;
 
-      const playerMoving = dx !== 0 || dy !== 0;
-      playerRef.current?.setState(playerMoving ? "walking" : "idle");
+      const playerMoving = !flockSeated && (dx !== 0 || dy !== 0);
+      playerRef.current?.setState(flockSeated ? "meeting" : playerMoving ? "walking" : "idle");
 
       if (playerMoving) {
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -424,7 +446,8 @@ export function GameCanvas() {
       }
 
       playerBobPhase.current += delta * 0.08;
-      playerRef.current?.setPosition(playerPos.current.x, playerPos.current.y);
+      const playerDisplayPosition = flockSeated ? seatedPosition(4) : playerPos.current;
+      playerRef.current?.setPosition(playerDisplayPosition.x, playerDisplayPosition.y);
       playerRef.current?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
       playerRef.current?.setBob(Math.sin(playerBobPhase.current) * 1.5);
       playerRef.current?.setFacing(playerDirection.current);
@@ -449,14 +472,22 @@ export function GameCanvas() {
           npcRuntimeRef.current.set(agent.id, newRuntime);
         }
 
-        const fishDeliveryActive = officeEvent?.kind === "fish";
-        const routineKey = fishDeliveryActive ? `fish:${agentIndex}` : `home:${agent.role}`;
+        const fishDeliveryActive = !flockSeated && officeEvent?.kind === "fish";
+        const routineKey = flockSeated
+          ? `seated:${agentIndex}`
+          : fishDeliveryActive
+            ? `fish:${agentIndex}`
+            : `home:${agent.role}`;
         if (runtime.routineKey !== routineKey) {
           runtime.routineKey = routineKey;
-          runtime.target = fishDeliveryActive
-            ? { ...fishGatherPosition(agentIndex) }
-            : stationForAgent(agent);
+          runtime.target = flockSeated
+            ? seatedPosition(agentIndex)
+            : fishDeliveryActive
+              ? { ...fishGatherPosition(agentIndex) }
+              : stationForAgent(agent);
         }
+
+        if (flockSeated) runtime.pos = { ...runtime.target };
 
         const tdx = runtime.target.x - runtime.pos.x;
         const tdy = runtime.target.y - runtime.pos.y;
@@ -472,11 +503,11 @@ export function GameCanvas() {
         const handle = npcHandlesRef.current.get(agent.id);
         handle?.setPosition(runtime.pos.x, runtime.pos.y);
         handle?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
-        handle?.setBob(Math.sin(runtime.bobPhase) * 1.5);
-        handle?.setFacing(runtime.direction);
+        handle?.setBob(flockSeated ? 0 : Math.sin(runtime.bobPhase) * 1.5);
+        handle?.setFacing(flockSeated ? SEATED_DIRECTIONS[agentIndex % SEATED_DIRECTIONS.length]! : runtime.direction);
         // Ring color reflects the agent's real backend state (idle,
         // coding, blocked, ...) rather than the cosmetic wander AI above.
-        handle?.setState(distance >= 0.5 ? "walking" : agent.state);
+        handle?.setState(flockSeated ? "meeting" : distance >= 0.5 ? "walking" : agent.state);
       }
 
       rafId = requestAnimationFrame(tick);
@@ -484,7 +515,7 @@ export function GameCanvas() {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [agentList, officeEvent]);
+  }, [agentList, officeEvent, flockSeated, collaborationTable]);
 
   const beginPropDrag = (event: React.PointerEvent<HTMLButtonElement>, prop: OfficeProp) => {
     const room = roomRef.current;
@@ -564,7 +595,11 @@ export function GameCanvas() {
         backgroundImage: "url(/sprites/club-penguin-office.webp)",
       }}
     >
-      <Character ref={playerRef} name="Watty" sprite={{ type: "directional", base: "watty" }} />
+      <Character
+        ref={playerRef}
+        name="Watty"
+        sprite={{ type: "directional", base: "watty", pose: flockSeated ? "seated" : "standing" }}
+      />
 
       {OFFICE_PROPS.map((prop) => {
         const layout = propLayouts[prop.id] ?? { ...prop.defaultPosition, width: prop.width };
@@ -632,6 +667,16 @@ export function GameCanvas() {
             >
               +
             </button>
+            {prop.id === "collaboration-table" && (
+              <button
+                type="button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => setFlockSeated((seated) => !seated)}
+                className="ml-1 rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-semibold text-sky-100 hover:bg-sky-400/30"
+              >
+                {flockSeated ? "Stand flock" : "Seat flock"}
+              </button>
+            )}
           </div>
         );
       })()}
@@ -688,6 +733,7 @@ export function GameCanvas() {
           key={agent.id}
           agent={agent}
           spriteBase={AGENT_SPRITE_BASES[i % AGENT_SPRITE_BASES.length]!}
+          seated={flockSeated}
           speech={speech}
           onHandle={(h) => npcHandlesRef.current.set(agent.id, h)}
         />
@@ -731,11 +777,13 @@ export function GameCanvas() {
 function AgentCharacter({
   agent,
   spriteBase,
+  seated,
   speech,
   onHandle,
 }: {
   agent: Agent;
   spriteBase: string;
+  seated: boolean;
   speech?: string;
   onHandle: (handle: CharacterHandle | null) => void;
 }) {
@@ -743,7 +791,7 @@ function AgentCharacter({
     <Character
       ref={onHandle}
       name={agent.name}
-      sprite={{ type: "directional", base: spriteBase }}
+      sprite={{ type: "directional", base: spriteBase, pose: seated ? "seated" : "standing" }}
       speech={speech}
     />
   );
