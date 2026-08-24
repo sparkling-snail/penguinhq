@@ -25,6 +25,10 @@ const MARGIN_X = 4;
 const PLAYER_SPEED = 0.32; // % of room width per frame at delta=1 (60fps)
 const NPC_SPEED = 0.11;
 const MEETING_WALK_SPEED = 0.23;
+// Let each cosmetic activity read as a deliberate work session. Agents now
+// remain at a station for 90–150 seconds before choosing their next stop.
+const AUTONOMY_STEP_MIN_MS = 90_000;
+const AUTONOMY_STEP_JITTER_MS = 60_000;
 
 // The 4 named penguin sprites we have art for. Agents beyond the 4th
 // cycle back through this list rather than needing a 1:1 asset per agent.
@@ -319,7 +323,6 @@ const SERVER_REPAIR_SPEECH: Record<ServerRepairPhase, string> = {
 };
 
 const OFFICE_EVENTS = [
-  { emoji: "🐟", text: "Fish delivery! The office is briefly distracted.", kind: "fish" },
   { emoji: "❄️", text: "Snowstorm outside — warm drinks are on.", kind: "snow" },
   { emoji: "☕", text: "Coffee machine fixed. Productivity restored.", kind: "coffee" },
   { emoji: "🖨️", text: "Printer jam! Someone has called IT.", kind: "printer" },
@@ -335,8 +338,6 @@ interface NpcRuntime {
   direction: SpriteDirection;
   routineKey?: string;
 }
-
-const FISH_DELIVERY_POSITION = { x: 76, y: 77 };
 
 type TableMeetingSlot = {
   /** Anchor measured from the collaboration prop's bottom-centre origin. */
@@ -390,16 +391,6 @@ const NAP_POD_SLEEP_HORIZONTAL_SCALE = 1.3552;
 const PORTFOLIO_SLEEP_SCALE = 0.5248;
 const PORTFOLIO_SLEEP_HORIZONTAL_SCALE = 0.936;
 const COFFEE_MAKER_ANCHOR = { x: 0.06, y: 0.03 } as const;
-
-function fishGatherPosition(index: number): OfficeStation {
-  const spots = [
-    { x: 69, y: 78 },
-    { x: 73, y: 83 },
-    { x: 79, y: 84 },
-    { x: 84, y: 79 },
-  ];
-  return spots[index % spots.length]!;
-}
 
 function officeLight(hour: number, mode: "auto" | "day" | "night"): "day" | "night" {
   if (mode === "day" || mode === "night") return mode;
@@ -636,7 +627,7 @@ export function GameCanvas() {
       window.setTimeout(() => {
         setAutonomyBeat((beat) => beat + 1);
         timer = scheduleNextBeat();
-      }, 45_000 + Math.random() * 30_000);
+      }, AUTONOMY_STEP_MIN_MS + Math.random() * AUTONOMY_STEP_JITTER_MS);
     let timer = scheduleNextBeat();
     return () => window.clearTimeout(timer);
   }, []);
@@ -730,7 +721,7 @@ export function GameCanvas() {
           return { kind };
         });
         scheduleNextStop();
-      }, 45_000 + Math.random() * 30_000);
+      }, AUTONOMY_STEP_MIN_MS + Math.random() * AUTONOMY_STEP_JITTER_MS);
     };
     scheduleNextStop();
     return () => {
@@ -888,21 +879,17 @@ export function GameCanvas() {
           npcRuntimeRef.current.set(agent.id, newRuntime);
         }
 
-        const fishDeliveryActive = !flockSeated && officeEvent?.kind === "fish";
         const serverRepairActive =
           !flockSeated &&
-          !fishDeliveryActive &&
           agent.role === "job_hunter" &&
           serverRepairPhase !== null;
         const stateDrivenRoutine =
           !flockSeated &&
-          !fishDeliveryActive &&
           !serverRepairActive &&
           agent.role !== "tech_scout" &&
           isLiveWorkState(agent.state);
         const autonomousRoutine =
           !flockSeated &&
-          !fishDeliveryActive &&
           !serverRepairActive &&
           !stateDrivenRoutine &&
           agent.role !== "tech_scout" &&
@@ -915,12 +902,10 @@ export function GameCanvas() {
               ["thinking", "coding", "debugging", "evaluating"].includes(agent.state)));
         const assignedResearchActive =
           !flockSeated &&
-          !fishDeliveryActive &&
           agent.role === "tech_scout" &&
           (agent.state === "researching" || agent.state === "searching");
         const autonomousLunaActive =
           !flockSeated &&
-          !fishDeliveryActive &&
           !assignedResearchActive &&
           agent.role === "tech_scout";
         const researchRoutineActive =
@@ -934,9 +919,7 @@ export function GameCanvas() {
         if (planningRoutineActive) planningLunaSeen = true;
         const routineKey = flockSeated
           ? `seated:${agentIndex}`
-          : fishDeliveryActive
-            ? `fish:${agentIndex}`
-            : serverRepairActive
+          : serverRepairActive
               ? serverRepairPhase === "alert"
                 ? `server-alert:${agent.role}`
                 : `server-repair:${serverRepairPosition.x}:${serverRepairPosition.y}`
@@ -959,9 +942,7 @@ export function GameCanvas() {
           runtime.routineKey = routineKey;
           runtime.target = flockSeated
             ? tableMeetingPosition(tableSlotIndex)
-          : fishDeliveryActive
-              ? { ...fishGatherPosition(agentIndex) }
-              : serverRepairActive
+          : serverRepairActive
                 ? serverRepairPhase === "alert"
                   ? { ...runtime.pos }
                   : { ...serverRepairPosition }
@@ -1488,21 +1469,6 @@ export function GameCanvas() {
           <span className="office-snowflake left-[38%] [animation-delay:1.2s]">❄</span>
           <span className="office-snowflake left-[67%] [animation-delay:2.4s]">❄</span>
           <span className="office-snowflake left-[88%] [animation-delay:0.6s]">❄</span>
-        </div>
-      )}
-
-      {officeModeEnabled && officeEvent?.kind === "fish" && (
-        <div
-          aria-label="Fresh fish delivery"
-          className="office-fish-delivery pointer-events-none absolute"
-          style={{
-            left: `${FISH_DELIVERY_POSITION.x}%`,
-            top: `${FISH_DELIVERY_POSITION.y}%`,
-            zIndex: Math.round(FISH_DELIVERY_POSITION.y * 100),
-          }}
-        >
-          <img src="/sprites/fish-delivery.webp" alt="A cooler filled with fresh fish" />
-          <span>Fresh catch!</span>
         </div>
       )}
 
