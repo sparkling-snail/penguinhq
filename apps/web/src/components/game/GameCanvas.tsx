@@ -395,6 +395,27 @@ const PORTFOLIO_SLEEP_SCALE = 0.5248;
 const PORTFOLIO_SLEEP_HORIZONTAL_SCALE = 0.936;
 const COFFEE_MAKER_ANCHOR = { x: 0.06, y: 0.03 } as const;
 
+/**
+ * The nap pod is a tall foreground prop. A character whose feet cross its
+ * body should be drawn behind it, just as they would be in an isometric game.
+ * The bounds are expressed in the same percentage coordinates as the prop,
+ * so dragging or resizing the pod keeps its occlusion region aligned.
+ */
+function isBehindNapPod(position: OfficeStation, pod: PlacedOfficeProp): boolean {
+  const podHeight = pod.width * PROP_WIDTH_TO_ROOM_Y;
+  return (
+    position.x >= pod.x - pod.width * 0.46 &&
+    position.x <= pod.x + pod.width * 0.32 &&
+    position.y >= pod.y - podHeight * 0.83 &&
+    position.y <= pod.y - podHeight * 0.1
+  );
+}
+
+function napPodOcclusionZIndex(pod: PlacedOfficeProp): number {
+  // Props use `y * 100 - 1`; stay one layer beneath that furniture plane.
+  return Math.round(pod.y * 100) - 2;
+}
+
 function officeLight(hour: number, mode: "auto" | "day" | "night"): "day" | "night" {
   if (mode === "day" || mode === "night") return mode;
   return hour >= 7 && hour < 19 ? "day" : "night";
@@ -835,6 +856,8 @@ export function GameCanvas() {
         playerRef.current?.setZIndex(Math.round(pod.y * 100));
       } else if (flockAtTable) {
         playerRef.current?.setZIndex(tableMeetingZIndex(WATTY_TABLE_SLOT_INDEX));
+      } else if (napPod && isBehindNapPod(playerDisplayPosition, napPod)) {
+        playerRef.current?.setZIndex(napPodOcclusionZIndex(napPod));
       }
       playerRef.current?.setScale(
         roomScaleRef.current *
@@ -1040,6 +1063,8 @@ export function GameCanvas() {
         else if (portfolioNapActive) {
           const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
           handle?.setZIndex(Math.round(pod.y * 100));
+        } else if (napPod && isBehindNapPod(runtime.pos, napPod)) {
+          handle?.setZIndex(napPodOcclusionZIndex(napPod));
         }
         handle?.setScale(
           roomScaleRef.current *
