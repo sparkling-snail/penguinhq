@@ -9,6 +9,7 @@ Posts to #jobs channel.
 """
 
 import logging
+import re
 
 from app.autonomous.base import BaseAgent
 from app.autonomous.bus import AgentMessage
@@ -42,6 +43,28 @@ class PortfolioPenguinAgent(BaseAgent):
             "to keep the application pipeline organized. "
             "Reply concisely, 2-4 sentences."
         )
+
+    @staticmethod
+    def _is_job_hunter_request(message: str) -> bool:
+        """Keep search and scraped-listing requests with Job Hunter."""
+        normalized = re.sub(r"[^a-z0-9]+", " ", message.lower()).strip()
+        mentions_jobs = bool(re.search(r"\b(?:jobs?|listings?)\b", normalized))
+        search_action = bool(
+            re.search(r"\b(?:search|find|found|scrape|scraped|collected)\b", normalized)
+        )
+        history_request = bool(
+            re.search(r"\b(?:show|list|display|see|what|which)\b", normalized)
+            and re.search(r"\b(?:today|all|found|collected|scraped)\b", normalized)
+        )
+        return mentions_jobs and (search_action or history_request)
+
+    async def respond_to_message(
+        self, message: str, reply_channel: str | None = None
+    ) -> str | None:
+        if self._is_job_hunter_request(message):
+            logger.debug("[portfolio] ignoring Job Hunter request on shared #jobs channel")
+            return None
+        return await super().respond_to_message(message, reply_channel=reply_channel)
 
     async def run_cycle(self) -> None:
         """Periodic maintenance: summarize the current pipeline status."""
