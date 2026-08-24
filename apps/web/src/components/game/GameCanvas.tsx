@@ -284,8 +284,8 @@ const PROP_WIDTH_TO_ROOM_Y = ROOM_ART_WIDTH / ROOM_ART_HEIGHT;
 // The sleeping illustration is wide (1431x970), unlike the upright square
 // poses. Anchor its bottom edge on the mattress and use a dedicated scale.
 const NAP_POD_SLEEP_ANCHOR = { x: -0.01, y: -0.34 } as const;
-const NAP_POD_SLEEP_SCALE = 0.525;
-const NAP_POD_SLEEP_HORIZONTAL_SCALE = 1.12;
+const NAP_POD_SLEEP_SCALE = 0.63525;
+const NAP_POD_SLEEP_HORIZONTAL_SCALE = 1.3552;
 const COFFEE_MAKER_ANCHOR = { x: 0.06, y: 0.03 } as const;
 
 function fishGatherPosition(index: number): OfficeStation {
