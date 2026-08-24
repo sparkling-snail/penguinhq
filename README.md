@@ -1,147 +1,211 @@
-# PenguinHQ — Milestone 1: Project Foundation
+# PenguinHQ
 
-An interactive AI operating system where AI agents live in a virtual office. This milestone
-stands up the monorepo skeleton, the real-time plumbing, and one controllable penguin — no
-agent intelligence yet, just a solid foundation everything else builds on.
+PenguinHQ is an interactive AI workspace where autonomous agents appear as penguins in a virtual office. The agents run continuously, talk with the user, retain memory and structured facts, collaborate through tasks, and expose their activity to the frontend in real time.
 
-## What's in this milestone
+The project is under active development. It is designed for local use and does not yet include authentication or production deployment hardening.
 
-- Monorepo: `apps/web` (Next.js), `apps/api` (FastAPI), `packages/shared-types` (TS contract docs)
-- PixiJS scene with one controllable penguin (WASD/arrows), one wandering NPC penguin, procedurally
-  drawn (no art assets required yet)
-- A WebSocket connection between frontend and backend, with a background task that fabricates
-  `pigeon.dispatched` events so the Kafka-pigeon flight animation has real traffic to render
-- A Slack-style chat sidebar (8 channels from the spec) seeded with example messages, wired to send
-  real `chat.message` events over the WebSocket
-- Postgres (via SQLAlchemy async + asyncpg) with one `agents` table, seeded with the six named agents
-- Redis connection (used for Celery + pub/sub broadcast in later milestones — just proven reachable here)
-- Docker Compose stack with hot reload on both services
+## What it does
+
+- Displays autonomous agents in a Club Penguin-inspired office UI.
+- Streams agent state, chat, and task events to the browser over WebSockets.
+- Runs four specialized agents concurrently in a separate Python process.
+- Stores agents, memories, facts, job listings, practice sessions, and inter-agent tasks in PostgreSQL.
+- Collects LinkedIn listings through an Apify MCP server.
+- Performs budgeted technology searches through a Tavily MCP server.
+- Visualizes inter-agent task dispatch and completion as messenger-pigeon flights.
+
+## Agents
+
+| Agent | Role | Autonomous cycle | Responsibility |
+| --- | --- | ---: | --- |
+| Job Hunter | `job_hunter` | 3 minutes | Searches LinkedIn through Apify, persists listings, evaluates fit, and sends promising leads to Portfolio Penguin. |
+| Leetcode Coach | `leetcode_coach` | Daily | Publishes coding practice problems and coaches the user without revealing full solutions unless asked. |
+| Tech Scout | `tech_scout` | Daily | Uses budgeted Tavily searches to produce a technology briefing grounded in current sources. |
+| Portfolio Penguin | `portfolio` | 5 minutes | Tracks job leads, drafts cover-letter outlines, and summarizes the application pipeline. |
+
+Each agent subclasses `BaseAgent` and runs as its own `asyncio.Task` inside the `agent-runner` service. Agents retain recent conversation memory as well as a closed schema of durable facts relevant to their role.
 
 ## Architecture
 
+```text
+Browser
+  ├── REST ────────────────┐
+  └── WebSocket ───────────┤
+                           ▼
+                    FastAPI service
+                     ├── PostgreSQL
+                     ├── Redis health check
+                     └── WebSocket fan-out
+                           ▲
+                           │ HTTP + WebSocket
+                    Agent runner
+                     ├── Job Hunter ── Apify MCP
+                     ├── Tech Scout ── Tavily MCP
+                     ├── Leetcode Coach
+                     └── Portfolio Penguin
+                           │
+                           └── in-process AgentBus
 ```
+
+An inter-agent dispatch follows two paths:
+
+1. The API persists a task and broadcasts `pigeon.dispatched` to connected browsers.
+2. The in-process `AgentBus` delivers the task to the destination agent immediately.
+3. The destination processes the task, updates the persisted record, and causes a `pigeon.delivered` event.
+
+The database is the task ledger; the current `AgentBus` queue itself is in memory and is not restart-durable.
+
+## Repository layout
+
+```text
 penguinhq/
-├── docker-compose.yml          # the whole local stack in one file
 ├── apps/
-│   ├── web/                    # Next.js + TypeScript + Tailwind + PixiJS
-│   │   └── src/
-│   │       ├── app/            # Next.js App Router (page.tsx is the shell)
-│   │       ├── components/
-│   │       │   ├── game/       # PixiJS layer — framework-agnostic, React-adapted at the edges
-│   │       │   │   ├── entities/   # Penguin, PlayerController, NPCPenguin, Pigeon
-│   │       │   │   └── world/      # room/floor rendering
-│   │       │   └── chat/       # Slack-style sidebar (ChannelList, MessageList, Composer)
-│   │       ├── stores/         # Zustand: gameStore (world state), chatStore (channels/messages)
-│   │       ├── lib/            # websocket.ts (reconnecting client), api.ts (REST client)
-│   │       ├── hooks/          # useWebSocket, useAgents (React Query)
-│   │       └── types/          # hand-mirrored copy of the shared wire contract
-│   └── api/                    # FastAPI + SQLAlchemy (async) + Redis
-│       └── app/
-│           ├── core/           # config, database, redis — infra, no business logic
-│           ├── domain/         # ORM models + Pydantic schemas (kept separate on purpose)
-│           ├── api/routes/     # health, agents, websocket
-│           └── ws/             # connection manager + the pigeon event simulator
-└── packages/shared-types/      # canonical TS contract (Agent, WSEvent, PigeonPayload, ...)
+│   ├── api/
+│   │   └── app/
+│   │       ├── api/routes/          # FastAPI REST and WebSocket routes
+│   │       ├── autonomous/          # agent base class, runtime, bus, and agents
+│   │       ├── core/                # database, Redis, and application settings
+│   │       ├── domain/              # SQLAlchemy models and Pydantic schemas
+│   │       └── ws/                  # WebSocket connection management
+│   └── web/
+│       └── src/
+│           ├── app/                 # Next.js App Router
+│           ├── components/          # office, chat, and practice UI
+│           ├── hooks/               # API and WebSocket integration
+│           ├── stores/              # Zustand state
+│           └── types/               # frontend wire types
+├── packages/shared-types/           # shared contract documentation/types
+├── docker-compose.yml
+└── .env.example
 ```
 
-### Key decisions
+The office is rendered with React and DOM/CSS animation rather than PixiJS or canvas.
 
-**Why PixiJS entities know nothing about React.** `PixiApp`, `Penguin`, `PlayerController`,
-`NPCPenguin`, and `Pigeon` are plain TypeScript classes with an `update(delta)` method called by
-Pixi's own ticker. `GameCanvas.tsx` is the only file that bridges React and Pixi — it creates one
-`PixiApp` on mount, destroys it on unmount, and pushes Zustand store changes into Pixi imperatively
-(`pixiApp.spawnPigeon(...)`) rather than letting React re-render the scene graph. Mixing React's
-declarative re-renders with a 60fps imperative renderer is a classic source of bugs; containing the
-seam to one component avoids that everywhere else.
+## Prerequisites
 
-**Why agents are drawn with `PIXI.Graphics` instead of sprite sheets.** There's no art pipeline yet.
-Procedural pixel-art keeps the whole app runnable with zero external assets today. When real
-spritesheets arrive, only `Penguin.redraw()` changes — every subclass and every consumer of
-`Penguin` is unaffected because they only depend on its public API (`setState`, `update`).
+- Docker with Docker Compose, recommended for the full stack.
+- An Anthropic API key for LLM-backed agent behavior.
+- An Apify API token for Job Hunter's LinkedIn searches.
+- A Tavily API key for Tech Scout's live research.
 
-**Why the WebSocket contract is hand-mirrored between Python and TypeScript
-(`app/domain/schemas/events.py` ↔ `apps/web/src/types/events.ts`) instead of a real shared package.**
-Each Docker build context is scoped to its own app folder so containers build fast and independently.
-`packages/shared-types` documents the canonical contract; the frontend keeps a hand-kept mirror. Once
-we move to a Turborepo-driven build (repo-root build context), this becomes a real workspace import
-and the duplication goes away.
+Node.js 20+ and Python 3 are also needed if you run services directly on the host.
 
-**Why `AgentOut` serializes as camelCase.** FastAPI/Pydantic naturally speaks snake_case; TypeScript
-naturally speaks camelCase. Rather than translating in a frontend adapter layer, `AgentOut` uses
-Pydantic's `alias_generator=to_camel` so the JSON on the wire already matches the frontend's `Agent`
-type field-for-field.
-
-**Why pigeon events are simulated (`app/ws/pigeon_simulator.py`).** There's no real task queue yet.
-The simulator fabricates a plausible `pigeon.dispatched` event every few seconds so the flight
-animation has real WebSocket traffic to render against, not a hardcoded frontend mock. When the real
-event-driven task pipeline ships, this file is deleted and `connection_manager.broadcast(...)` is
-called from the actual dispatch code path — the `WSEvent` contract doesn't change.
-
-## Running it
-
-**Docker (recommended — matches how it'll run in every environment):**
+## Quick start
 
 ```bash
-cd penguinhq
 cp .env.example .env
+```
+
+Add the integrations you want to use to `.env`:
+
+```dotenv
+ANTHROPIC_API_KEY=your_key
+APIFY_API_TOKEN=your_token
+TAVILY_API_KEY=your_key
+```
+
+Then start the stack:
+
+```bash
 docker compose up --build
 ```
 
-- Frontend: http://localhost:3000
-- Backend: http://localhost:8000 (docs at http://localhost:8000/docs)
-- Postgres: localhost:5432, Redis: localhost:6379
+| Service | Address |
+| --- | --- |
+| Web application | http://localhost:3000 |
+| API | http://localhost:8000 |
+| Interactive API docs | http://localhost:8000/docs |
+| PostgreSQL | localhost:5432 |
+| Redis | localhost:6379 |
 
-Both `api` and `web` bind-mount their source directories, so edits on your machine hot-reload inside
-the containers (uvicorn `--reload`, Next.js dev server).
+The API and web source directories are mounted into their development containers. Python agent files are watched by `watchfiles`, so changes restart the agent process automatically.
 
-**Without Docker (running services natively):**
+### Optional integrations
+
+The API and frontend can run without external agent credentials, but the affected autonomous capabilities will be unavailable:
+
+- Without `ANTHROPIC_API_KEY`, LLM calls fail and the agents cannot generate useful responses.
+- Without `APIFY_API_TOKEN`, Job Hunter cannot collect LinkedIn listings.
+- Without `TAVILY_API_KEY`, Tech Scout cannot perform live research.
+
+See `.env.example` for search terms, locations, daily limits, MCP endpoints, timeouts, and other supported settings. Configure provider-side spending limits as the final cost backstop; the code's daily quotas are operational guardrails, not billing controls.
+
+## Running services directly
+
+Start the infrastructure first:
 
 ```bash
-# Terminal 1 — Postgres + Redis only, still via Docker
 docker compose up postgres redis
+```
 
-# Terminal 2 — backend
+Run the API:
+
+```bash
 cd apps/api
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp ../../.env.example ../../.env   # or export DATABASE_URL / REDIS_URL directly
 uvicorn app.main:app --reload --port 8000
+```
 
-# Terminal 3 — frontend
+Run the autonomous agents in another terminal with the same Python environment and required environment variables:
+
+```bash
+cd apps/api
+python -m app.autonomous
+```
+
+Run the frontend:
+
+```bash
 cd apps/web
 npm install
 npm run dev
 ```
 
-## Testing it
+When running outside Docker, ensure `DATABASE_URL`, `REDIS_URL`, `PENGUINHQ_API_BASE`, and `PENGUINHQ_WS_BASE` point to locally reachable services.
 
-1. Open http://localhost:3000 — you should see a dark, glassmorphism-paneled office scene on the
-   left and the chat sidebar on the right.
-2. Move the blue penguin ("You") with WASD or arrow keys; the orange "Job Hunter" NPC wanders on its
-   own.
-3. Every ~6 seconds a pigeon flies across the scene carrying a colored envelope — hover it to see the
-   task ID, source/destination agent, priority, latency, retries, queue, and payload size.
-4. In the chat sidebar, switch to `#jobs` to see the seeded conversation between Job Hunter,
-   Portfolio Penguin, and Leetcode Coach. Type a message and hit Enter/Send — it round-trips through
-   the backend's WebSocket endpoint and reappears (open two browser tabs to see it broadcast).
-5. `curl http://localhost:8000/agents` returns the six seeded agents as JSON.
-6. `curl http://localhost:8000/health/ready` confirms Postgres and Redis are both reachable.
-
-**Static checks** (already run during development, safe to re-run):
+## Health checks
 
 ```bash
-cd apps/api && python -m py_compile $(find app -name "*.py")   # backend syntax
-cd apps/web && npx tsc --noEmit                                  # frontend types
-cd apps/web && npx next lint                                     # frontend lint
+curl http://localhost:8000/health
+curl http://localhost:8000/health/ready
+curl http://localhost:8000/agents
+curl http://localhost:8000/jobs
 ```
 
-## What's deliberately NOT in this milestone
+`/health` is the liveness endpoint. `/health/ready` verifies PostgreSQL and reports Redis connectivity.
 
-- No agent intelligence, LLM calls, or real task execution
-- No multi-room navigation (everything renders in one "Mission Control" room for now)
-- No auth (Clerk), no Celery workers, no Kubernetes/AWS deployment config
-- No message/agent persistence beyond the seeded rows — chat history and pigeon flights are
-  in-memory and reset on refresh/restart
+## Development checks
 
-These are exactly the seams this milestone was built to make easy to fill in next — say the word
-for Milestone 2.
+Backend syntax check:
+
+```bash
+python3 -m compileall -q apps/api/app
+```
+
+Frontend type check and production build:
+
+```bash
+pnpm --filter @penguinhq/web typecheck
+pnpm --filter @penguinhq/web build
+```
+
+The repository does not currently have a comprehensive automated test suite.
+
+## Current limitations
+
+- API routes and WebSocket connections are not authenticated; do not expose the development stack directly to the internet.
+- Agent task delivery uses an in-memory queue even though task records are persisted.
+- Agent facts are scoped per agent rather than shared as a single user or candidate profile.
+- WebSocket fan-out is process-local and does not yet use Redis pub/sub.
+- Database tables are initialized by the application; there is no migration workflow yet.
+- Backend and frontend event contracts still require some manual synchronization.
+- Search quality and availability depend on external MCP providers and their actor/tool schemas.
+
+## Further documentation
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) contains deeper implementation notes, though some sections may lag behind the source during active development.
+- [`HANDOVER.md`](HANDOVER.md) is a dated development snapshot and should not be treated as the canonical setup guide.
+
+For current behavior, the source code, `.env.example`, and this README are authoritative.
