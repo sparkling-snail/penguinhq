@@ -752,6 +752,15 @@ export function GameCanvas() {
         }
         showStatus={!playerSleeping && !flockSeated}
         horizontalScale={playerSleeping ? NAP_POD_SLEEP_HORIZONTAL_SCALE : 1}
+        activity={
+          coffeePhase === "grinding"
+            ? "coffee-grinding"
+            : coffeePhase === "pouring"
+              ? "coffee-pouring"
+              : coffeePhase === "sipping"
+                ? "coffee-sipping"
+                : undefined
+        }
         sprite={
           playerSleeping
             ? { type: "static", url: "/sprites/agents/watty-sleeping.png" }
@@ -874,7 +883,9 @@ export function GameCanvas() {
                 onClick={() => {
                   setFlockSeated(false);
                   setPlayerSleeping(false);
-                  setCoffeePhase((phase) => (phase ? null : "approaching"));
+                  const nextPhase = coffeePhase ? null : "approaching";
+                  setCoffeePhase(nextPhase);
+                  if (nextPhase) setSelectedPropId(null);
                 }}
                 className="ml-1 rounded bg-amber-500/25 px-2 py-0.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-400/35"
               >
@@ -896,8 +907,11 @@ export function GameCanvas() {
           }}
         >
           <span className="office-coffee-cup">☕</span>
+          <span className="office-coffee-stream" />
           <span className="office-coffee-steam">〰</span>
           <span className="office-coffee-spark">✦</span>
+          <span className="office-coffee-bean office-coffee-bean--one">●</span>
+          <span className="office-coffee-bean office-coffee-bean--two">●</span>
         </div>
       )}
 

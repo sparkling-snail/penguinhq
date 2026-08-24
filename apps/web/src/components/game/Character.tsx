@@ -78,6 +78,7 @@ export interface CharacterProps {
   speech?: string;
   showStatus?: boolean;
   horizontalScale?: number;
+  activity?: "coffee-grinding" | "coffee-pouring" | "coffee-sipping";
 }
 
 /**
@@ -90,7 +91,7 @@ export interface CharacterProps {
  * or a backend agent-state change) is React state.
  */
 export const Character = forwardRef<CharacterHandle, CharacterProps>(function Character(
-  { name, sprite, speech, showStatus = true, horizontalScale = 1 },
+  { name, sprite, speech, showStatus = true, horizontalScale = 1, activity },
   ref
 ) {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -213,7 +214,15 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
           {/* Keep locomotion on a wrapper: the image's inline transform is
               updated at 60fps for facing/bobbing, so animating the image
               itself would make those transforms fight each other. */}
-          <div className={state === "walking" ? "penguin-walk-cycle h-full" : "h-full"}>
+          <div
+            className={`h-full ${
+              state === "walking"
+                ? "penguin-walk-cycle"
+                : activity
+                  ? `penguin-${activity}`
+                  : ""
+            }`}
+          >
             <img
               ref={spriteRef}
               src={initialSrc}

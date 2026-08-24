@@ -60,9 +60,45 @@
   animation: penguin-step-shadow 360ms ease-in-out infinite;
 }
 
+/* Watty's coffee routine runs on the sprite wrapper so it can coexist with
+   the per-frame facing transform applied directly to the image. */
+@keyframes penguin-coffee-press {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  35% { transform: translateX(4px) rotate(5deg) scaleY(0.97); }
+  55% { transform: translateX(2px) rotate(2deg); }
+}
+
+@keyframes penguin-coffee-pour {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  45%, 70% { transform: translate(5px, 2px) rotate(7deg); }
+}
+
+@keyframes penguin-coffee-drink {
+  0%, 18%, 100% { transform: translateY(0) rotate(0deg); }
+  42%, 68% { transform: translateY(-4px) rotate(-7deg); }
+}
+
+.penguin-coffee-grinding {
+  transform-origin: bottom center;
+  animation: penguin-coffee-press 480ms ease-in-out 3;
+}
+
+.penguin-coffee-pouring {
+  transform-origin: bottom center;
+  animation: penguin-coffee-pour 680ms ease-in-out 2;
+}
+
+.penguin-coffee-sipping {
+  transform-origin: bottom center;
+  animation: penguin-coffee-drink 1.15s ease-in-out 2;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .penguin-walk-cycle,
-  .penguin-walk-shadow {
+  .penguin-walk-shadow,
+  .penguin-coffee-grinding,
+  .penguin-coffee-pouring,
+  .penguin-coffee-sipping {
     animation: none;
   }
 }
@@ -187,6 +223,52 @@
 .office-coffee-action--grinding .office-coffee-cup { opacity: 0.35; }
 .office-coffee-action--pouring .office-coffee-cup { animation: coffee-cup-fill 900ms ease-out both; }
 .office-coffee-action--sipping { animation: coffee-sip 1.2s ease-in-out 2; }
+
+.office-coffee-stream {
+  position: absolute;
+  left: 50%;
+  top: -15px;
+  width: 3px;
+  height: 23px;
+  border-radius: 999px;
+  background: linear-gradient(#78350f, #451a03);
+  opacity: 0;
+  transform: translateX(-50%) scaleY(0);
+  transform-origin: top;
+}
+
+.office-coffee-action--pouring .office-coffee-stream {
+  opacity: 0.9;
+  transform: translateX(-50%) scaleY(1);
+  transition: transform 220ms ease-out;
+}
+
+@keyframes coffee-bean-hop {
+  0% { opacity: 0; transform: translate(0, 5px) scale(0.6); }
+  35% { opacity: 1; transform: translate(var(--bean-x), -13px) scale(1); }
+  100% { opacity: 0; transform: translate(var(--bean-end), 4px) scale(0.75); }
+}
+
+.office-coffee-bean {
+  --bean-x: -9px;
+  --bean-end: -12px;
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  color: #78350f;
+  font-size: 8px;
+  opacity: 0;
+}
+
+.office-coffee-bean--two {
+  --bean-x: 10px;
+  --bean-end: 14px;
+  animation-delay: 180ms !important;
+}
+
+.office-coffee-action--grinding .office-coffee-bean {
+  animation: coffee-bean-hop 620ms ease-out infinite;
+}
 
 .office-coffee-steam {
   position: absolute;
