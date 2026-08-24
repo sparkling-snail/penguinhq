@@ -88,7 +88,16 @@ export interface CharacterProps {
   horizontalScale?: number;
   /** Per-sprite visual normalization for assets with different transparent padding. */
   scaleMultiplier?: number;
-  activity?: "coffee-grinding" | "coffee-pouring" | "coffee-sipping" | "planning-board";
+  activity?:
+    | "coffee-grinding"
+    | "coffee-pouring"
+    | "coffee-sipping"
+    | "planning-board"
+    | "server-alert"
+    | "server-diagnose"
+    | "server-repair"
+    | "server-reboot"
+    | "server-celebrate";
 }
 
 /**
@@ -247,6 +256,10 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
               className="h-full w-auto select-none"
               style={{
                 transformOrigin: "bottom center",
+                // Global responsive-image styles cap wide static poses to
+                // this narrow anchor wrapper. Sleeping sprites need their
+                // natural aspect ratio so they lie across the pod mattress.
+                maxWidth: sprite.type === "static" ? "none" : "100%",
                 // The initial render has no movement tick yet, so apply the
                 // directional width correction here as well.
                 transform: `scaleX(${(sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1) * horizontalScale})`,
