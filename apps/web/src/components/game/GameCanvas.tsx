@@ -387,7 +387,7 @@ const NAP_POD_SLEEP_SCALE = 0.63525;
 const NAP_POD_SLEEP_HORIZONTAL_SCALE = 1.3552;
 // Ziggy's generated sleeping canvas is much wider and has more transparent
 // headroom than Watty's. Normalize the visible silhouette for the same pod.
-const PORTFOLIO_SLEEP_SCALE = 0.82;
+const PORTFOLIO_SLEEP_SCALE = 0.5248;
 const PORTFOLIO_SLEEP_HORIZONTAL_SCALE = 0.936;
 const COFFEE_MAKER_ANCHOR = { x: 0.06, y: 0.03 } as const;
 
@@ -555,7 +555,7 @@ export function GameCanvas() {
   const portfolioSleepingPosition = (): OfficeStation => {
     const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
     const position = sleepingPosition();
-    return { x: position.x + pod.width * 0.14, y: position.y };
+    return { x: position.x + pod.width * 0.04, y: position.y };
   };
 
   const coffeeMakerPosition = (): OfficeStation => {
