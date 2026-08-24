@@ -12,7 +12,7 @@ import logging
 import os
 import re
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import httpx
@@ -420,6 +420,45 @@ class JobHunterAgent(BaseAgent):
         # listener; messages typed in #jobs retain their @mention.
         return re.sub(r"^@job_hunter\b\s*", "", message, flags=re.IGNORECASE).strip()
 
+    @staticmethod
+    def _is_listing_history_request(message: str) -> bool:
+        """Recognize requests to display collected jobs, not search for new ones."""
+        normalized = re.sub(r"[^a-z0-9]+", " ", message.lower()).strip()
+        mentions_jobs = bool(re.search(r"\b(?:jobs?|listings?)\b", normalized))
+        asks_to_display = bool(
+            re.search(r"\b(?:show|list|display|see|what|which)\b", normalized)
+        )
+        references_results = bool(
+            re.search(r"\b(?:found|find|collected|saved|today|all)\b", normalized)
+        )
+        return mentions_jobs and asks_to_display and references_results
+
+    async def _todays_listings(self) -> list[dict]:
+        """Return listings first persisted today without spending search quota."""
+        try:
+            response = await self._http.get(
+                f"{self._api_base()}/jobs", params={"limit": 200}, timeout=15.0
+            )
+            response.raise_for_status()
+            today = date.today()
+            listings: list[dict] = []
+            for job in response.json():
+                first_seen = job.get("firstSeenAt") or job.get("first_seen_at")
+                if not first_seen:
+                    continue
+                try:
+                    seen_date = datetime.fromisoformat(
+                        str(first_seen).replace("Z", "+00:00")
+                    ).astimezone().date()
+                except (TypeError, ValueError):
+                    continue
+                if seen_date == today:
+                    listings.append(job)
+            return listings
+        except Exception:
+            logger.exception("[job_hunter] failed to fetch today's persisted listings")
+            return []
+
     async def respond_to_message(self, message: str, reply_channel: str | None = None) -> str | None:
         """Run a real Apify search for a direct Job Hunter request.
 
@@ -429,6 +468,20 @@ class JobHunterAgent(BaseAgent):
         criteria = self._search_request(message)
         if not criteria:
             criteria = LINKEDIN_KEYWORDS
+
+        if self._is_listing_history_request(criteria):
+            jobs = await self._todays_listings()
+            if jobs:
+                formatted = "\n\n".join(_format_listing(job) for job in jobs)
+                reply = (
+                    f"📋 Here are all {len(jobs)} listing"
+                    f"{'s' if len(jobs) != 1 else ''} I found today:\n\n{formatted}"
+                )
+            else:
+                reply = "📋 I don't have any persisted listings from today to show yet."
+            await self.append_memory("user", message)
+            await self.announce(reply, channel=reply_channel)
+            return reply
 
         await self.set_state("searching")
         try:
