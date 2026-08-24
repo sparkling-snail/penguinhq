@@ -70,6 +70,20 @@ def _format_listing(job: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_listing_card(job: dict) -> str:
+    """Serialize a compact listing for the web chat's job-card renderer."""
+    payload = {
+        "title": job.get("title") or "Untitled role",
+        "company": job.get("company") or "Unknown company",
+        "location": job.get("location") or "Location not specified",
+        "salary": job.get("salary") or None,
+        "postedDate": job.get("posted_date") or job.get("postedDate") or None,
+        "skills": (job.get("skills") or [])[:5],
+        "url": job.get("url") or "",
+    }
+    return f":::job-card\n{json.dumps(payload, ensure_ascii=False)}\n:::"
+
+
 class ApifyMcpLinkedInJobCollector:
     """Call the configured LinkedIn Jobs actor through Apify's MCP server."""
 
@@ -472,7 +486,7 @@ class JobHunterAgent(BaseAgent):
         if self._is_listing_history_request(criteria):
             jobs = await self._todays_listings()
             if jobs:
-                formatted = "\n\n".join(_format_listing(job) for job in jobs)
+                formatted = "\n\n".join(_format_listing_card(job) for job in jobs)
                 reply = (
                     f"📋 Here are all {len(jobs)} listing"
                     f"{'s' if len(jobs) != 1 else ''} I found today:\n\n{formatted}"
@@ -502,7 +516,7 @@ class JobHunterAgent(BaseAgent):
             jobs = await self._fetch_listings(criteria, count=requested_count)
             used, limit = await self._daily_quota_status()
             if jobs:
-                formatted = "\n\n".join(_format_listing(job) for job in jobs)
+                formatted = "\n\n".join(_format_listing_card(job) for job in jobs)
                 reply = (
                     f"🔍 LinkedIn search completed through Apify — {len(jobs)} verified listing"
                     f"{'s' if len(jobs) != 1 else ''} (daily quota: {used}/{limit}).\n\n{formatted}"
@@ -612,11 +626,12 @@ class JobHunterAgent(BaseAgent):
             criteria = task.payload.get("criteria", str(task.payload))
             jobs = await self._fetch_listings(criteria, count=3)
             if jobs:
-                formatted = "\n\n".join(_format_listing(j) for j in jobs)
+                formatted = "\n\n".join(_format_listing_card(j) for j in jobs)
+                task_result = "\n\n".join(_format_listing(j) for j in jobs)
                 await self.announce(
                     f"🎯 Requested LinkedIn search for '{criteria}':\n{formatted}"
                 )
-                result = formatted
+                result = task_result
             else:
                 error = self._last_collection_error or "Apify returned no matching listings"
                 await self.announce(f"⚠️ LinkedIn search for '{criteria}' did not return listings: {error}.")
