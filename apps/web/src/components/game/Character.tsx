@@ -209,24 +209,29 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
         )}
 
         <div className="absolute bottom-0 left-1/2" style={{ height: SPRITE_HEIGHT, transform: "translateX(-50%)" }}>
-          <img
-            ref={spriteRef}
-            src={initialSrc}
-            alt={name}
-            draggable={false}
-            className="h-full w-auto select-none"
-            style={{
-              transformOrigin: "bottom center",
-              // The initial render has no movement tick yet, so apply the
-              // directional width correction here as well.
-              transform: `scaleX(${sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1})`,
-            }}
-          />
+          {/* Keep locomotion on a wrapper: the image's inline transform is
+              updated at 60fps for facing/bobbing, so animating the image
+              itself would make those transforms fight each other. */}
+          <div className={state === "walking" ? "penguin-walk-cycle h-full" : "h-full"}>
+            <img
+              ref={spriteRef}
+              src={initialSrc}
+              alt={name}
+              draggable={false}
+              className="h-full w-auto select-none"
+              style={{
+                transformOrigin: "bottom center",
+                // The initial render has no movement tick yet, so apply the
+                // directional width correction here as well.
+                transform: `scaleX(${sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1})`,
+              }}
+            />
+          </div>
         </div>
 
         {showStatus && (
           <div
-            className="absolute left-1/2 rounded-full bg-black/35"
+            className={`absolute left-1/2 rounded-full bg-black/35 ${state === "walking" ? "penguin-walk-shadow" : ""}`}
             style={{
               bottom: -3,
               width: 32,

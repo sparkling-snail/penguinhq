@@ -256,8 +256,9 @@ type TableMeetingSlot = {
 // A table should model capacity, rather than forcing every nearby character
 // into a generic "seated" pose. This prop has exactly three visible stools:
 // left coral, front aqua, and right yellow. The remaining two flock members
-// take standing discussion slots behind the tabletop, where the furniture
-// naturally occludes their lower bodies.
+// take standing discussion slots at the back-side edges. They are only partly
+// occluded by the table, keeping their upper bodies readable instead of
+// making them look like detached heads.
 //
 // Every point is local to the prop's bottom-centre origin and scales with its
 // width, so moving/resizing the furniture cannot break the meeting formation.
@@ -265,8 +266,8 @@ const TABLE_MEETING_SLOTS: readonly TableMeetingSlot[] = [
   { x: -0.294, y: -0.237, direction: "front-right", pose: "seated", depth: "front" },
   { x: 0, y: -0.127, direction: "front-left", pose: "seated", depth: "front" },
   { x: 0.303, y: -0.237, direction: "front-left", pose: "seated", depth: "front" },
-  { x: -0.19, y: -0.49, direction: "rear-right", pose: "standing", depth: "rear" },
-  { x: 0.19, y: -0.49, direction: "rear-left", pose: "standing", depth: "rear" },
+  { x: -0.47, y: -0.42, direction: "rear-right", pose: "standing", depth: "rear" },
+  { x: 0.47, y: -0.42, direction: "rear-left", pose: "standing", depth: "rear" },
 ] as const;
 
 // Watty owns the central chair. The four specialists take the left, right,
@@ -280,10 +281,10 @@ const WATTY_TABLE_SLOT_INDEX = 1;
 // seats drift down onto the tabletop in our non-square 1470x1070 room.
 const PROP_WIDTH_TO_ROOM_Y = ROOM_ART_WIDTH / ROOM_ART_HEIGHT;
 
-// The pod image is positioned from its bottom-centre. This anchor lands
-// Watty's feet on the mattress, inside the open doorway, and scales with
-// the prop when the user resizes it.
-const NAP_POD_SLEEP_ANCHOR = { x: 0.02, y: -0.27 } as const;
+// The sleeping illustration is wide (1431x970), unlike the upright square
+// poses. Anchor its bottom edge on the mattress and use a dedicated scale.
+const NAP_POD_SLEEP_ANCHOR = { x: -0.01, y: -0.34 } as const;
+const NAP_POD_SLEEP_SCALE = 0.5;
 const COFFEE_MAKER_ANCHOR = { x: 0.06, y: 0.03 } as const;
 
 function fishGatherPosition(index: number): OfficeStation {
@@ -571,9 +572,16 @@ export function GameCanvas() {
           ? tableMeetingPosition(WATTY_TABLE_SLOT_INDEX)
           : playerPos.current;
       playerRef.current?.setPosition(playerDisplayPosition.x, playerDisplayPosition.y);
-      if (flockSeated) playerRef.current?.setZIndex(tableMeetingZIndex(WATTY_TABLE_SLOT_INDEX));
+      if (playerSleeping) {
+        const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
+        playerRef.current?.setZIndex(Math.round(pod.y * 100));
+      } else if (flockSeated) {
+        playerRef.current?.setZIndex(tableMeetingZIndex(WATTY_TABLE_SLOT_INDEX));
+      }
       playerRef.current?.setScale(
-        roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER * (playerSleeping ? 0.62 : 1)
+        roomScaleRef.current *
+          CHARACTER_SCALE_MULTIPLIER *
+          (playerSleeping ? NAP_POD_SLEEP_SCALE : 1)
       );
       playerRef.current?.setBob(playerSleeping ? 0 : Math.sin(playerBobPhase.current) * 1.5);
       playerRef.current?.setFacing(
@@ -795,7 +803,7 @@ export function GameCanvas() {
         if (!prop || !layout) return null;
         return (
           <div
-            className="absolute z-[10050] flex items-center gap-1 rounded-md border border-sky-200/50 bg-slate-950/90 p-1 shadow-lg"
+            className="absolute z-[30050] flex items-center gap-1 rounded-md border border-sky-200/50 bg-slate-950/90 p-1 shadow-lg"
             style={{
               left: `${layout.x}%`,
               top: `${Math.max(4, layout.y - 12)}%`,
@@ -828,7 +836,13 @@ export function GameCanvas() {
                 onClick={() => {
                   setPlayerSleeping(false);
                   setCoffeePhase(null);
-                  setFlockSeated((seated) => !seated);
+                  const nextSeated = !flockSeated;
+                  setFlockSeated(nextSeated);
+                  // The edit toolbar sits over the front chair at this table
+                  // location. A meeting should read as a clean scene, not as
+                  // furniture-edit mode, so close it once the flock arrives.
+                  // Re-select the table at any time to stand the flock up.
+                  if (nextSeated) setSelectedPropId(null);
                 }}
                 className="ml-1 rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-semibold text-sky-100 hover:bg-sky-400/30"
               >
@@ -842,7 +856,9 @@ export function GameCanvas() {
                 onClick={() => {
                   setFlockSeated(false);
                   setCoffeePhase(null);
-                  setPlayerSleeping((sleeping) => !sleeping);
+                  const nextSleeping = !playerSleeping;
+                  setPlayerSleeping(nextSleeping);
+                  if (nextSleeping) setSelectedPropId(null);
                 }}
                 className="ml-1 rounded bg-indigo-500/25 px-2 py-0.5 text-[10px] font-semibold text-indigo-100 hover:bg-indigo-400/35"
               >

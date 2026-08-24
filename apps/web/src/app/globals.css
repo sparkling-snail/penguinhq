@@ -34,6 +34,39 @@
   }
 }
 
+/* A short, weighty two-step waddle. The alternating rotation sells the
+   penguin's footfalls even though each facing direction is a single frame. */
+@keyframes penguin-waddle {
+  0% { transform: translateY(0) rotate(-4deg) scaleX(0.98) scaleY(1.01); }
+  25% { transform: translateY(-3px) rotate(0deg) scaleX(1.01) scaleY(0.99); }
+  50% { transform: translateY(0) rotate(4deg) scaleX(0.98) scaleY(1.01); }
+  75% { transform: translateY(-3px) rotate(0deg) scaleX(1.01) scaleY(0.99); }
+  100% { transform: translateY(0) rotate(-4deg) scaleX(0.98) scaleY(1.01); }
+}
+
+@keyframes penguin-step-shadow {
+  0%, 50%, 100% { transform: translateX(-50%) scaleX(1); opacity: 0.36; }
+  25%, 75% { transform: translateX(-50%) scaleX(0.78); opacity: 0.25; }
+}
+
+.penguin-walk-cycle {
+  transform-origin: bottom center;
+  will-change: transform;
+  animation: penguin-waddle 360ms ease-in-out infinite;
+}
+
+.penguin-walk-shadow {
+  transform-origin: center;
+  animation: penguin-step-shadow 360ms ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .penguin-walk-cycle,
+  .penguin-walk-shadow {
+    animation: none;
+  }
+}
+
 @keyframes speech-pop {
   0% {
     opacity: 0;
