@@ -62,6 +62,7 @@ class BaseAgent(ABC):
     role: str = ""
     cycle_seconds: int = 120
     chat_channel: str = "logs"
+    interaction_state: str = "meeting"
     memory_limit: int = 16
     model: str = "claude-haiku-4-5-20251001"
 
@@ -370,7 +371,7 @@ class BaseAgent(ABC):
         sent, not before — it's a second LLM call, and the human shouldn't
         wait longer for a reply just so facts can be updated in the
         background."""
-        await self.set_state("meeting")
+        await self.set_state(self.interaction_state)
         history = await self.fetch_memory()
         facts = await self.fetch_facts() if self.fact_schema else {}
         reply = await self.ask_llm(message, history=history, facts=facts)

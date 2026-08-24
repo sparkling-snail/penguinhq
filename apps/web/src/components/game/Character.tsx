@@ -16,7 +16,15 @@ export type SpriteDirection = "front-left" | "front-right" | "rear-left" | "rear
  */
 export type CharacterSprite =
   | { type: "static"; url: string }
-  | { type: "directional"; base: string; pose?: "standing" | "seated" };
+  | {
+      type: "directional";
+      base: string;
+      pose?: "standing" | "seated";
+      /** Optional per-facing seated art; unspecified facings use the default asset. */
+      seatedSpriteUrls?: Partial<Record<SpriteDirection, string>>;
+      /** Avoid a one-frame incorrect facing while the game loop initializes. */
+      initialDirection?: SpriteDirection;
+    };
 
 const STATE_RING_COLOR: Record<AgentState, string> = {
   idle: "#64748b",
@@ -78,7 +86,9 @@ export interface CharacterProps {
   speech?: string;
   showStatus?: boolean;
   horizontalScale?: number;
-  activity?: "coffee-grinding" | "coffee-pouring" | "coffee-sipping";
+  /** Per-sprite visual normalization for assets with different transparent padding. */
+  scaleMultiplier?: number;
+  activity?: "coffee-grinding" | "coffee-pouring" | "coffee-sipping" | "planning-board";
 }
 
 /**
@@ -91,7 +101,7 @@ export interface CharacterProps {
  * or a backend agent-state change) is React state.
  */
 export const Character = forwardRef<CharacterHandle, CharacterProps>(function Character(
-  { name, sprite, speech, showStatus = true, horizontalScale = 1, activity },
+  { name, sprite, speech, showStatus = true, horizontalScale = 1, scaleMultiplier = 1, activity },
   ref
 ) {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -106,16 +116,22 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
     if (sprite.type !== "directional") return null;
     const base = sprite.base;
     const poseSuffix = sprite.pose === "seated" ? "-seated" : "";
-    return {
+    const defaults = {
       "front-left": `/sprites/agents/${base}${poseSuffix}-front-left.${sprite.pose === "seated" ? "png" : "webp"}`,
       "front-right": `/sprites/agents/${base}${poseSuffix}-front-right.${sprite.pose === "seated" ? "png" : "webp"}`,
       "rear-left": `/sprites/agents/${base}${poseSuffix}-rear-left.${sprite.pose === "seated" ? "png" : "webp"}`,
       "rear-right": `/sprites/agents/${base}${poseSuffix}-rear-right.${sprite.pose === "seated" ? "png" : "webp"}`,
     } satisfies Record<SpriteDirection, string>;
+    return sprite.pose === "seated" ? { ...defaults, ...sprite.seatedSpriteUrls } : defaults;
   }, [sprite]);
 
-  const initialSrc = sprite.type === "static" ? sprite.url : (directionalUrls as Record<SpriteDirection, string>)["front-left"];
-  const poseScale = sprite.type === "directional" && sprite.pose === "seated" ? SEATED_CHARACTER_SCALE : 1;
+  const initialSrc =
+    sprite.type === "static"
+      ? sprite.url
+      : (directionalUrls as Record<SpriteDirection, string>)[sprite.initialDirection ?? "front-left"];
+  const poseScale =
+    (sprite.type === "directional" && sprite.pose === "seated" ? SEATED_CHARACTER_SCALE : 1) *
+    scaleMultiplier;
 
   useImperativeHandle(ref, () => ({
     setPosition(xPct, yPct) {

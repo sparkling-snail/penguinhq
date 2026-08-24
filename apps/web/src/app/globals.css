@@ -293,3 +293,34 @@
   opacity: 1;
   animation: speech-pop 300ms ease-out both;
 }
+
+@keyframes penguin-board-plan {
+  0%, 100% { transform: rotate(-2deg) translateY(0); }
+  45% { transform: rotate(2.5deg) translateY(-2px); }
+  65% { transform: rotate(1deg) translateY(-1px); }
+}
+
+@keyframes planning-note-pop {
+  0%, 100% { opacity: 0.25; transform: translateY(3px) scale(0.75); }
+  50% { opacity: 1; transform: translateY(-5px) scale(1.08); }
+}
+
+.penguin-planning-board {
+  animation: penguin-board-plan 850ms ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+.office-planning-sparks {
+  display: flex;
+  gap: 5px;
+  color: #ddd6fe;
+  font-size: 14px;
+  text-shadow: 0 0 6px rgb(167 139 250 / 90%);
+}
+
+.office-planning-sparks span {
+  animation: planning-note-pop 1.15s ease-in-out infinite;
+}
+
+.office-planning-sparks span:nth-child(2) { animation-delay: 180ms; }
+.office-planning-sparks span:nth-child(3) { animation-delay: 360ms; }

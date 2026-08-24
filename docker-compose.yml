@@ -80,7 +80,10 @@ services:
       PENGUINHQ_API_BASE: http://api:8000
       PENGUINHQ_WS_BASE: ws://api:8000/ws
       REDIS_URL: redis://redis:6379/0
-    command: ["python", "-m", "app.autonomous"]
+    # Unlike uvicorn, the standalone agent process has no built-in reload
+    # loop. Watch Python sources so changes to agent behavior take effect in
+    # development without requiring a manual container restart.
+    command: ["watchfiles", "--filter", "python", "python -m app.autonomous", "/app"]
     volumes:
       - ./apps/api:/app
     depends_on:

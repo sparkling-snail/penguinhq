@@ -86,6 +86,7 @@ class TechScoutAgent(BaseAgent):
     role = "tech_scout"
     cycle_seconds = 86_400
     chat_channel = "research"
+    interaction_state = "researching"
     memory_limit = 16
     fact_schema = ["interests", "research_preferences"]
     _quota_fact = "_tech_scout_tavily_quota"

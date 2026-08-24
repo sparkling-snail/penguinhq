@@ -24,10 +24,39 @@ const MARGIN_X = 4;
 
 const PLAYER_SPEED = 0.32; // % of room width per frame at delta=1 (60fps)
 const NPC_SPEED = 0.11;
+const MEETING_WALK_SPEED = 0.23;
 
 // The 4 named penguin sprites we have art for. Agents beyond the 4th
 // cycle back through this list rather than needing a 1:1 asset per agent.
 const AGENT_SPRITE_BASES = ["bluey", "kip", "luna", "ziggy"];
+const AGENT_SPRITE_BY_ROLE: Record<string, string> = {
+  job_hunter: "bluey",
+  leetcode_coach: "kip",
+  tech_scout: "luna",
+  portfolio: "ziggy",
+};
+
+// Only the three real table-chair facings need the stool-free seated art.
+// Other directions intentionally fall back to the original seated sprites.
+const SEATED_NO_STOOL_SPRITES: Partial<Record<string, Partial<Record<SpriteDirection, string>>>> = {
+  bluey: {
+    "front-left": "/sprites/agents/bluey-seated-nostool-front-left.png",
+    "front-right": "/sprites/agents/bluey-seated-nostool-front-right.png",
+  },
+  kip: {
+    "front-left": "/sprites/agents/kip-seated-nostool-front-left.png",
+    "front-right": "/sprites/agents/kip-seated-nostool-front-right.png",
+  },
+  watty: { "front-left": "/sprites/agents/watty-seated-nostool-front-left.png" },
+};
+
+// The generated PNG canvases have different transparent padding. Normalize
+// their actual visible heights so every occupied chair reads as the same size.
+const SEATED_SPRITE_SCALE: Partial<Record<string, number>> = {
+  bluey: 1,
+  kip: 0.981,
+  watty: 1,
+};
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -52,6 +81,7 @@ interface OfficeProp {
   id: string;
   name: string;
   src: string;
+  workingSrc?: string;
   defaultPosition: OfficeStation;
   width: number;
   /** Visual-only correction for props whose art needs to fit a room corner. */
@@ -65,11 +95,16 @@ interface PlacedOfficeProp extends OfficeStation {
 }
 
 type CoffeePhase = "approaching" | "grinding" | "pouring" | "sipping";
+type LunaRoutine =
+  | { kind: "planning-board" }
+  | { kind: "research-workstation" }
+  | { kind: "wander"; position: OfficeStation };
 
 // These anchors correspond to places in the room art. Agent state remains
 // the source of truth; this is only the visual routine chosen for that state.
 const OFFICE_STATIONS: Record<string, OfficeStation> = {
   library: { x: 17, y: 61 },
+  top_middle: { x: 52, y: 53 },
   desk: { x: 53, y: 69 },
   collaboration: { x: 47, y: 80 },
   cafe: { x: 74, y: 64 },
@@ -101,6 +136,7 @@ const OFFICE_PROPS: OfficeProp[] = [
     id: "research-workstation",
     name: "Research workstation",
     src: "/sprites/props/research-workstation.png",
+    workingSrc: "/sprites/props/research-workstation-luna.png",
     defaultPosition: { x: 29.00751681782516, y: 64.89467022576784 },
     width: 21.5,
   },
@@ -199,7 +235,7 @@ const STATE_STATION: Record<AgentState, keyof typeof OFFICE_STATIONS> = {
 // populated instead of emptying one area whenever several agents share a
 // state such as "searching" or "meeting".
 const HOME_STATION_BY_ROLE: Record<string, keyof typeof OFFICE_STATIONS> = {
-  tech_scout: "library",
+  tech_scout: "top_middle",
   portfolio: "desk",
   job_hunter: "entrance",
   leetcode_coach: "collaboration",
@@ -261,9 +297,11 @@ type TableMeetingSlot = {
 // Every point is local to the prop's bottom-centre origin and scales with its
 // width, so moving/resizing the furniture cannot break the meeting formation.
 const TABLE_MEETING_SLOTS: readonly TableMeetingSlot[] = [
-  { x: -0.294, y: -0.237, direction: "front-right", pose: "seated", depth: "front" },
-  { x: 0, y: -0.127, direction: "front-left", pose: "seated", depth: "front" },
-  { x: 0.303, y: -0.237, direction: "front-left", pose: "seated", depth: "front" },
+  // Stool-free sprite canvases retain a small transparent lower margin. These
+  // anchors place the visible feet on the stool cushions (not on the table).
+  { x: -0.264, y: -0.26, direction: "front-right", pose: "seated", depth: "front" },
+  { x: 0, y: -0.19, direction: "front-left", pose: "seated", depth: "front" },
+  { x: 0.353, y: -0.26, direction: "front-left", pose: "seated", depth: "front" },
   // Sprite filenames describe the camera angle, not the beak direction:
   // front-left faces visually right and front-right faces visually left.
   { x: -0.19, y: -0.59, direction: "front-left", pose: "standing", depth: "rear" },
@@ -330,6 +368,8 @@ export function GameCanvas() {
   const playerPos = useRef({ x: 50, y: 80 });
   const playerDirection = useRef<SpriteDirection>("front-left");
   const playerBobPhase = useRef(Math.random() * Math.PI * 2);
+  const researchAgentSeatedRef = useRef(false);
+  const lunaAtPlanningBoardRef = useRef(false);
 
   // One wander-AI runtime + DOM handle per agent, keyed by agent id.
   const npcRuntimeRef = useRef<Map<string, NpcRuntime>>(new Map());
@@ -343,8 +383,12 @@ export function GameCanvas() {
   const [draggingPropId, setDraggingPropId] = useState<string | null>(null);
   const [selectedPropId, setSelectedPropId] = useState<string | null>(null);
   const [flockSeated, setFlockSeated] = useState(false);
+  const [flockWalkingToSeats, setFlockWalkingToSeats] = useState(false);
   const [playerSleeping, setPlayerSleeping] = useState(false);
   const [coffeePhase, setCoffeePhase] = useState<CoffeePhase | null>(null);
+  const [researchAgentSeated, setResearchAgentSeated] = useState(false);
+  const [lunaRoutine, setLunaRoutine] = useState<LunaRoutine>({ kind: "planning-board" });
+  const [lunaAtPlanningBoard, setLunaAtPlanningBoard] = useState(false);
   const [propPositionsLoaded, setPropPositionsLoaded] = useState(false);
   // Time is browser-local. Start neutral so server and client render the
   // same HTML, then adopt the local clock after hydration.
@@ -364,11 +408,30 @@ export function GameCanvas() {
     () => Object.values(agents).sort((a, b) => a.id.localeCompare(b.id)),
     [agents]
   );
-
   const light = officeLight(clock?.getHours() ?? 12, officeTimeMode);
   const collaborationTable = propLayouts["collaboration-table"];
+  const researchWorkstation = propLayouts["research-workstation"];
+  const planningBoard = propLayouts["planning-board"];
   const napPod = propLayouts["nap-pod"];
   const coffeeNook = propLayouts["coffee-nook"];
+  const flockAtTable = flockSeated && !flockWalkingToSeats;
+  const researchSeatPosition = useMemo(() => {
+    const workstation = researchWorkstation ?? { x: 29, y: 65, width: 21.5 };
+    return {
+      // The chair and Luna are slightly left of the square prop's centre.
+      x: workstation.x - workstation.width * 0.1,
+      // Props are bottom-anchored; convert the chair's local vertical offset
+      // from prop-width units into the room's non-square coordinate system.
+      y: workstation.y - workstation.width * 0.11 * PROP_WIDTH_TO_ROOM_Y,
+    };
+  }, [researchWorkstation]);
+  const planningBoardPosition = useMemo(() => {
+    const board = planningBoard ?? { x: 39, y: 52, width: 18.5 };
+    return {
+      x: board.x + board.width * 0.04,
+      y: board.y + board.width * 0.18,
+    };
+  }, [planningBoard]);
 
   const tableMeetingSlot = (slotIndex: number): TableMeetingSlot =>
     TABLE_MEETING_SLOTS[slotIndex % TABLE_MEETING_SLOTS.length]!;
@@ -490,6 +553,34 @@ export function GameCanvas() {
     };
   }, [officeModeEnabled]);
 
+  // Luna alternates between planning, researching, and exploring the floor.
+  // Real research work and shared office events override this cosmetic loop.
+  useEffect(() => {
+    let timer: number | undefined;
+    const scheduleNextStop = () => {
+      timer = window.setTimeout(() => {
+        setLunaRoutine((current) => {
+          const choices = (["planning-board", "research-workstation", "wander"] as const).filter(
+            (kind) => kind !== current.kind
+          );
+          const kind = choices[Math.floor(Math.random() * choices.length)]!;
+          if (kind === "wander") {
+            return {
+              kind,
+              position: { x: 18 + Math.random() * 64, y: 55 + Math.random() * 31 },
+            };
+          }
+          return { kind };
+        });
+        scheduleNextStop();
+      }, 20_000 + Math.random() * 15_000);
+    };
+    scheduleNextStop();
+    return () => {
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
+
   // Keyboard input — tracked in a ref (not state) since it's read every
   // frame by the game loop below, not something React needs to react to.
   useEffect(() => {
@@ -526,8 +617,10 @@ export function GameCanvas() {
       playerRef.current?.setState(
         playerSleeping
           ? "sleeping"
-          : flockSeated
+          : flockAtTable
             ? "meeting"
+            : flockWalkingToSeats
+              ? "walking"
             : walkingToCoffee
               ? "walking"
               : coffeePhase
@@ -537,7 +630,20 @@ export function GameCanvas() {
                   : "idle"
       );
 
-      if (walkingToCoffee) {
+      if (flockWalkingToSeats) {
+        const target = tableMeetingPosition(WATTY_TABLE_SLOT_INDEX);
+        const cdx = target.x - playerPos.current.x;
+        const cdy = target.y - playerPos.current.y;
+        const distance = Math.sqrt(cdx * cdx + cdy * cdy);
+        if (distance < 0.45) {
+          playerPos.current = target;
+          playerDirection.current = tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).direction;
+        } else {
+          playerPos.current.x += (cdx / distance) * PLAYER_SPEED * delta;
+          playerPos.current.y += (cdy / distance) * PLAYER_SPEED * delta;
+          playerDirection.current = getDirectionFromDelta(cdx, cdy);
+        }
+      } else if (walkingToCoffee) {
         const target = coffeeMakerPosition();
         const cdx = target.x - playerPos.current.x;
         const cdy = target.y - playerPos.current.y;
@@ -569,14 +675,14 @@ export function GameCanvas() {
       playerBobPhase.current += delta * 0.08;
       const playerDisplayPosition = playerSleeping
         ? sleepingPosition()
-        : flockSeated
+        : flockAtTable
           ? tableMeetingPosition(WATTY_TABLE_SLOT_INDEX)
           : playerPos.current;
       playerRef.current?.setPosition(playerDisplayPosition.x, playerDisplayPosition.y);
       if (playerSleeping) {
         const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
         playerRef.current?.setZIndex(Math.round(pod.y * 100));
-      } else if (flockSeated) {
+      } else if (flockAtTable) {
         playerRef.current?.setZIndex(tableMeetingZIndex(WATTY_TABLE_SLOT_INDEX));
       }
       playerRef.current?.setScale(
@@ -586,8 +692,20 @@ export function GameCanvas() {
       );
       playerRef.current?.setBob(playerSleeping ? 0 : Math.sin(playerBobPhase.current) * 1.5);
       playerRef.current?.setFacing(
-        playerSleeping ? false : coffeePhase && coffeePhase !== "approaching" ? "rear-left" : playerDirection.current
+        playerSleeping
+          ? false
+          : flockAtTable
+            ? tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).direction
+            : coffeePhase && coffeePhase !== "approaching"
+              ? "rear-left"
+              : playerDirection.current
       );
+      let meetingArrivalComplete =
+        !flockWalkingToSeats ||
+        Math.hypot(
+          playerPos.current.x - tableMeetingPosition(WATTY_TABLE_SLOT_INDEX).x,
+          playerPos.current.y - tableMeetingPosition(WATTY_TABLE_SLOT_INDEX).y
+        ) < 0.45;
 
       // --- Agents: state-driven office routines ---
       const liveIds = new Set(agentList.map((a) => a.id));
@@ -595,6 +713,8 @@ export function GameCanvas() {
         if (!liveIds.has(id)) npcRuntimeRef.current.delete(id);
       }
 
+      let activeResearcherSeen = false;
+      let planningLunaSeen = false;
       for (const [agentIndex, agent] of agentList.entries()) {
         const tableSlotIndex = AGENT_TABLE_SLOT_INDICES[agentIndex % AGENT_TABLE_SLOT_INDICES.length]!;
         let runtime = npcRuntimeRef.current.get(agent.id);
@@ -611,42 +731,117 @@ export function GameCanvas() {
         }
 
         const fishDeliveryActive = !flockSeated && officeEvent?.kind === "fish";
+        const assignedResearchActive =
+          !flockSeated &&
+          !fishDeliveryActive &&
+          agent.role === "tech_scout" &&
+          (agent.state === "researching" || agent.state === "searching");
+        const autonomousLunaActive =
+          !flockSeated &&
+          !fishDeliveryActive &&
+          !assignedResearchActive &&
+          agent.role === "tech_scout";
+        const researchRoutineActive =
+          assignedResearchActive ||
+          (autonomousLunaActive && lunaRoutine.kind === "research-workstation");
+        const planningRoutineActive =
+          autonomousLunaActive && lunaRoutine.kind === "planning-board";
+        const wanderingLunaActive = autonomousLunaActive && lunaRoutine.kind === "wander";
+        if (researchRoutineActive) activeResearcherSeen = true;
+        if (planningRoutineActive) planningLunaSeen = true;
         const routineKey = flockSeated
           ? `seated:${agentIndex}`
           : fishDeliveryActive
             ? `fish:${agentIndex}`
-            : `home:${agent.role}`;
+            : researchRoutineActive
+              ? `research:${researchSeatPosition.x}:${researchSeatPosition.y}`
+              : planningRoutineActive
+                ? `planning-board:${planningBoardPosition.x}:${planningBoardPosition.y}`
+                : wanderingLunaActive
+                  ? `luna-wander:${lunaRoutine.position.x}:${lunaRoutine.position.y}`
+                : `home:${agent.role}`;
         if (runtime.routineKey !== routineKey) {
           runtime.routineKey = routineKey;
           runtime.target = flockSeated
             ? tableMeetingPosition(tableSlotIndex)
             : fishDeliveryActive
               ? { ...fishGatherPosition(agentIndex) }
-              : stationForAgent(agent);
+              : researchRoutineActive
+                ? { ...researchSeatPosition }
+                : planningRoutineActive
+                  ? { ...planningBoardPosition }
+                  : wanderingLunaActive
+                    ? { ...lunaRoutine.position }
+                  : stationForAgent(agent);
         }
 
-        if (flockSeated) runtime.pos = { ...runtime.target };
+        if (flockAtTable) runtime.pos = { ...runtime.target };
 
         const tdx = runtime.target.x - runtime.pos.x;
         const tdy = runtime.target.y - runtime.pos.y;
         const distance = Math.sqrt(tdx * tdx + tdy * tdy);
         if (distance >= 0.5) {
-          runtime.pos.x += (tdx / distance) * NPC_SPEED * delta;
-          runtime.pos.y += (tdy / distance) * NPC_SPEED * delta;
+          const speed = flockWalkingToSeats ? MEETING_WALK_SPEED : NPC_SPEED;
+          runtime.pos.x += (tdx / distance) * speed * delta;
+          runtime.pos.y += (tdy / distance) * speed * delta;
           runtime.direction = getDirectionFromDelta(tdx, tdy);
+        }
+        if (flockWalkingToSeats && Math.hypot(runtime.target.x - runtime.pos.x, runtime.target.y - runtime.pos.y) >= 0.5) {
+          meetingArrivalComplete = false;
+        }
+
+        if (researchRoutineActive) {
+          const arrived = distance < 0.5;
+          if (researchAgentSeatedRef.current !== arrived) {
+            researchAgentSeatedRef.current = arrived;
+            setResearchAgentSeated(arrived);
+          }
+        }
+
+        if (planningRoutineActive) {
+          const arrived = distance < 0.5;
+          if (lunaAtPlanningBoardRef.current !== arrived) {
+            lunaAtPlanningBoardRef.current = arrived;
+            setLunaAtPlanningBoard(arrived);
+          }
         }
 
         runtime.bobPhase += delta * 0.08;
 
         const handle = npcHandlesRef.current.get(agent.id);
         handle?.setPosition(runtime.pos.x, runtime.pos.y);
-        if (flockSeated) handle?.setZIndex(tableMeetingZIndex(tableSlotIndex));
+        if (flockAtTable) handle?.setZIndex(tableMeetingZIndex(tableSlotIndex));
         handle?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
-        handle?.setBob(flockSeated ? 0 : Math.sin(runtime.bobPhase) * 1.5);
-        handle?.setFacing(flockSeated ? tableMeetingSlot(tableSlotIndex).direction : runtime.direction);
+        handle?.setBob(flockAtTable || (planningRoutineActive && distance < 0.5) ? 0 : Math.sin(runtime.bobPhase) * 1.5);
+        handle?.setFacing(
+          flockAtTable
+            ? tableMeetingSlot(tableSlotIndex).direction
+            : planningRoutineActive && distance < 0.5
+              ? "rear-right"
+              : runtime.direction
+        );
         // Ring color reflects the agent's real backend state (idle,
         // coding, blocked, ...) rather than the cosmetic wander AI above.
-        handle?.setState(flockSeated ? "meeting" : distance >= 0.5 ? "walking" : agent.state);
+        handle?.setState(
+          flockAtTable
+            ? "meeting"
+            : distance >= 0.5
+              ? "walking"
+              : planningRoutineActive
+                ? "planning"
+                : agent.state
+        );
+      }
+
+      if (flockWalkingToSeats && meetingArrivalComplete) setFlockWalkingToSeats(false);
+
+      if (!activeResearcherSeen && researchAgentSeatedRef.current) {
+        researchAgentSeatedRef.current = false;
+        setResearchAgentSeated(false);
+      }
+      if (!planningLunaSeen && lunaAtPlanningBoardRef.current) {
+        lunaAtPlanningBoardRef.current = false;
+        setLunaAtPlanningBoard(false);
       }
 
       rafId = requestAnimationFrame(tick);
@@ -654,7 +849,7 @@ export function GameCanvas() {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [agentList, officeEvent, flockSeated, playerSleeping, coffeePhase, collaborationTable, napPod, coffeeNook]);
+  }, [agentList, officeEvent, flockSeated, flockWalkingToSeats, flockAtTable, playerSleeping, coffeePhase, lunaRoutine, collaborationTable, researchSeatPosition, planningBoardPosition, napPod, coffeeNook]);
 
   const beginPropDrag = (event: React.PointerEvent<HTMLButtonElement>, prop: OfficeProp) => {
     const room = roomRef.current;
@@ -750,8 +945,9 @@ export function GameCanvas() {
                     ? "Ahh, perfect."
                     : undefined
         }
-        showStatus={!playerSleeping && !flockSeated}
+        showStatus={!playerSleeping && !flockAtTable}
         horizontalScale={playerSleeping ? NAP_POD_SLEEP_HORIZONTAL_SCALE : 1}
+        scaleMultiplier={flockAtTable ? SEATED_SPRITE_SCALE.watty : 1}
         activity={
           coffeePhase === "grinding"
             ? "coffee-grinding"
@@ -767,9 +963,11 @@ export function GameCanvas() {
             : {
                 type: "directional",
                 base: "watty",
-                pose: flockSeated && tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).pose === "seated"
+                pose: flockAtTable && tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).pose === "seated"
                   ? "seated"
                   : "standing",
+                seatedSpriteUrls: SEATED_NO_STOOL_SPRITES.watty,
+                initialDirection: "front-left",
               }
         }
       />
@@ -803,7 +1001,14 @@ export function GameCanvas() {
               transform: `translate(-50%, -100%) translate(${prop.renderOffset?.x ?? 0}%, ${prop.renderOffset?.y ?? 0}%) rotate(${prop.renderRotation ?? 0}deg) scale(${prop.renderScale ?? 1})`,
             }}
           >
-            <img src={prop.src} alt="" draggable={false} className="block h-auto w-full" />
+            <img
+              src={prop.id === "research-workstation" && researchAgentSeated && prop.workingSrc
+                ? prop.workingSrc
+                : prop.src}
+              alt=""
+              draggable={false}
+              className="block h-auto w-full"
+            />
           </button>
         );
       })}
@@ -849,6 +1054,7 @@ export function GameCanvas() {
                   setCoffeePhase(null);
                   const nextSeated = !flockSeated;
                   setFlockSeated(nextSeated);
+                  setFlockWalkingToSeats(nextSeated);
                   // The edit toolbar sits over the front chair at this table
                   // location. A meeting should read as a clean scene, not as
                   // furniture-edit mode, so close it once the flock arrives.
@@ -866,6 +1072,7 @@ export function GameCanvas() {
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => {
                   setFlockSeated(false);
+                  setFlockWalkingToSeats(false);
                   setCoffeePhase(null);
                   const nextSleeping = !playerSleeping;
                   setPlayerSleeping(nextSleeping);
@@ -882,6 +1089,7 @@ export function GameCanvas() {
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => {
                   setFlockSeated(false);
+                  setFlockWalkingToSeats(false);
                   setPlayerSleeping(false);
                   const nextPhase = coffeePhase ? null : "approaching";
                   setCoffeePhase(nextPhase);
@@ -912,6 +1120,22 @@ export function GameCanvas() {
           <span className="office-coffee-spark">✦</span>
           <span className="office-coffee-bean office-coffee-bean--one">●</span>
           <span className="office-coffee-bean office-coffee-bean--two">●</span>
+        </div>
+      )}
+
+      {lunaAtPlanningBoard && planningBoard && (
+        <div
+          aria-hidden="true"
+          className="office-planning-sparks pointer-events-none absolute"
+          style={{
+            left: `${planningBoard.x + planningBoard.width * 0.2}%`,
+            top: `${planningBoard.y - planningBoard.width * 0.62 * PROP_WIDTH_TO_ROOM_Y}%`,
+            zIndex: Math.round(planningBoard.y * 100) + 20_010,
+          }}
+        >
+          <span>✦</span>
+          <span>✎</span>
+          <span>✦</span>
         </div>
       )}
 
@@ -957,6 +1181,7 @@ export function GameCanvas() {
       )}
 
       {agentList.map((agent, i) => {
+        if (researchAgentSeated && agent.role === "tech_scout") return null;
         const liveSpeech = agentSpeech[agent.id];
         const tableSlotIndex = AGENT_TABLE_SLOT_INDICES[i % AGENT_TABLE_SLOT_INDICES.length]!;
         const speech =
@@ -967,9 +1192,12 @@ export function GameCanvas() {
         <AgentCharacter
           key={agent.id}
           agent={agent}
-          spriteBase={AGENT_SPRITE_BASES[i % AGENT_SPRITE_BASES.length]!}
-          seated={flockSeated && tableMeetingSlot(tableSlotIndex).pose === "seated"}
-          inMeeting={flockSeated}
+          spriteBase={AGENT_SPRITE_BY_ROLE[agent.role] ?? AGENT_SPRITE_BASES[i % AGENT_SPRITE_BASES.length]!}
+          seated={flockAtTable && tableMeetingSlot(tableSlotIndex).pose === "seated"}
+          seatedDirection={tableMeetingSlot(tableSlotIndex).direction}
+          seatedScale={SEATED_SPRITE_SCALE[AGENT_SPRITE_BY_ROLE[agent.role] ?? AGENT_SPRITE_BASES[i % AGENT_SPRITE_BASES.length]!] ?? 1}
+          inMeeting={flockAtTable}
+          activity={lunaAtPlanningBoard && agent.role === "tech_scout" ? "planning-board" : undefined}
           speech={speech}
           onHandle={(h) => npcHandlesRef.current.set(agent.id, h)}
         />
@@ -1014,14 +1242,20 @@ function AgentCharacter({
   agent,
   spriteBase,
   seated,
+  seatedDirection,
+  seatedScale,
   inMeeting,
+  activity,
   speech,
   onHandle,
 }: {
   agent: Agent;
   spriteBase: string;
   seated: boolean;
+  seatedDirection: SpriteDirection;
+  seatedScale: number;
   inMeeting: boolean;
+  activity?: "planning-board";
   speech?: string;
   onHandle: (handle: CharacterHandle | null) => void;
 }) {
@@ -1029,9 +1263,17 @@ function AgentCharacter({
     <Character
       ref={onHandle}
       name={agent.name}
-      sprite={{ type: "directional", base: spriteBase, pose: seated ? "seated" : "standing" }}
+      sprite={{
+        type: "directional",
+        base: spriteBase,
+        pose: seated ? "seated" : "standing",
+        seatedSpriteUrls: SEATED_NO_STOOL_SPRITES[spriteBase],
+        initialDirection: seated ? seatedDirection : "front-left",
+      }}
       speech={speech}
       showStatus={!inMeeting}
+      scaleMultiplier={seated ? seatedScale : 1}
+      activity={activity}
     />
   );
 }
