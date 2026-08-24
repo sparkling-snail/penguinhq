@@ -149,6 +149,9 @@ const OFFICE_PROPS: OfficeProp[] = [
     id: "desk",
     name: "Developer desk",
     src: "/sprites/props/developer-desk-chair.png",
+    // This is a complete transparent scene, including Kip in the chair.
+    // Swap it in only after he has walked to the desk; it preserves the
+    // correct depth ordering without fragile multi-layer compositing.
     workingSrc: "/sprites/props/developer-desk-kip.png",
     defaultPosition: { x: 15.21249836904824, y: 75.01831851202584 },
     width: 18.5,
