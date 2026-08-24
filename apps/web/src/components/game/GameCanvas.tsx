@@ -264,8 +264,10 @@ const TABLE_MEETING_SLOTS: readonly TableMeetingSlot[] = [
   { x: -0.294, y: -0.237, direction: "front-right", pose: "seated", depth: "front" },
   { x: 0, y: -0.127, direction: "front-left", pose: "seated", depth: "front" },
   { x: 0.303, y: -0.237, direction: "front-left", pose: "seated", depth: "front" },
-  { x: -0.19, y: -0.49, direction: "front-right", pose: "standing", depth: "rear" },
-  { x: 0.19, y: -0.49, direction: "front-left", pose: "standing", depth: "rear" },
+  // Sprite filenames describe the camera angle, not the beak direction:
+  // front-left faces visually right and front-right faces visually left.
+  { x: -0.19, y: -0.59, direction: "front-left", pose: "standing", depth: "rear" },
+  { x: 0.19, y: -0.59, direction: "front-right", pose: "standing", depth: "rear" },
 ] as const;
 
 // Watty owns the central chair. The four specialists take the left, right,
