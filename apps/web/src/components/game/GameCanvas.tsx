@@ -255,9 +255,8 @@ type TableMeetingSlot = {
 // A table should model capacity, rather than forcing every nearby character
 // into a generic "seated" pose. This prop has exactly three visible stools:
 // left coral, front aqua, and right yellow. The remaining two flock members
-// take standing discussion slots at the back-side edges. They are only partly
-// occluded by the table, keeping their upper bodies readable instead of
-// making them look like detached heads.
+// take standing discussion slots along the far side of the table. They are
+// occluded by the tabletop so the meeting retains correct scene depth.
 //
 // Every point is local to the prop's bottom-centre origin and scales with its
 // width, so moving/resizing the furniture cannot break the meeting formation.
@@ -265,8 +264,8 @@ const TABLE_MEETING_SLOTS: readonly TableMeetingSlot[] = [
   { x: -0.294, y: -0.237, direction: "front-right", pose: "seated", depth: "front" },
   { x: 0, y: -0.127, direction: "front-left", pose: "seated", depth: "front" },
   { x: 0.303, y: -0.237, direction: "front-left", pose: "seated", depth: "front" },
-  { x: -0.47, y: -0.42, direction: "rear-right", pose: "standing", depth: "rear" },
-  { x: 0.47, y: -0.42, direction: "rear-left", pose: "standing", depth: "rear" },
+  { x: -0.19, y: -0.49, direction: "front-right", pose: "standing", depth: "rear" },
+  { x: 0.19, y: -0.49, direction: "front-left", pose: "standing", depth: "rear" },
 ] as const;
 
 // Watty owns the central chair. The four specialists take the left, right,
