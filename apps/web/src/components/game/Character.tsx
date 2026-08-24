@@ -43,9 +43,9 @@ const SPRITE_HEIGHT = 74;
 // small horizontal correction keeps the flock pleasantly squat in the room
 // instead of making each penguin read as stretched vertically.
 const DIRECTIONAL_SPRITE_WIDTH_SCALE = 1.16;
-// Sitting art includes its own stool, so it needs a smaller footprint than
-// the standing pose to align with the stools built into the table prop.
-const SEATED_CHARACTER_SCALE = 0.78;
+// Sitting art includes its own stool. Keep it slightly smaller than a standing
+// penguin, but large enough to read as a person occupying each table chair.
+const SEATED_CHARACTER_SCALE = 1.08;
 // Furniture uses room-depth z-indexes below 10,000. Keep every character
 // above that layer while preserving depth ordering between penguins.
 const CHARACTER_Z_INDEX_BASE = 20_000;
@@ -77,6 +77,7 @@ export interface CharacterProps {
   sprite: CharacterSprite;
   speech?: string;
   showStatus?: boolean;
+  horizontalScale?: number;
 }
 
 /**
@@ -89,7 +90,7 @@ export interface CharacterProps {
  * or a backend agent-state change) is React state.
  */
 export const Character = forwardRef<CharacterHandle, CharacterProps>(function Character(
-  { name, sprite, speech, showStatus = true },
+  { name, sprite, speech, showStatus = true, horizontalScale = 1 },
   ref
 ) {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -156,8 +157,8 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
   function applyTransform() {
     const img = spriteRef.current;
     if (!img) return;
-    const horizontalScale = sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1;
-    img.style.transform = `translateY(${bobRef.current}px) scaleX(${(flippedRef.current ? -1 : 1) * horizontalScale})`;
+    const directionScale = sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1;
+    img.style.transform = `translateY(${bobRef.current}px) scaleX(${(flippedRef.current ? -1 : 1) * directionScale * horizontalScale})`;
   }
 
   return (
@@ -223,7 +224,7 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
                 transformOrigin: "bottom center",
                 // The initial render has no movement tick yet, so apply the
                 // directional width correction here as well.
-                transform: `scaleX(${sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1})`,
+                transform: `scaleX(${(sprite.type === "directional" ? DIRECTIONAL_SPRITE_WIDTH_SCALE : 1) * horizontalScale})`,
               }}
             />
           </div>

@@ -33,14 +33,13 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-// Ported from Claude-Office's Character.tsx — same slightly-quirky
-// isometric 4-way mapping, kept identical since our sprite sheet uses
-// their exact direction-naming convention (front-left/front-right/
-// rear-left/rear-right).
+// Map screen-space travel to the matching visible pose. "Front" means the
+// penguin is travelling down/toward the viewer, while "rear" means up/away.
+// The left/right suffix follows the direction the beak and feet point.
 function getDirectionFromDelta(dx: number, dy: number): SpriteDirection {
-  if (dy < 0 && dx >= 0) return "front-left";
-  if (dy < 0 && dx < 0) return "front-right";
-  if (dy >= 0 && dx >= 0) return "rear-left";
+  if (dy < 0 && dx >= 0) return "rear-right";
+  if (dy < 0 && dx < 0) return "rear-left";
+  if (dy >= 0 && dx >= 0) return "front-right";
   return "front-left";
 }
 
@@ -284,7 +283,8 @@ const PROP_WIDTH_TO_ROOM_Y = ROOM_ART_WIDTH / ROOM_ART_HEIGHT;
 // The sleeping illustration is wide (1431x970), unlike the upright square
 // poses. Anchor its bottom edge on the mattress and use a dedicated scale.
 const NAP_POD_SLEEP_ANCHOR = { x: -0.01, y: -0.34 } as const;
-const NAP_POD_SLEEP_SCALE = 0.5;
+const NAP_POD_SLEEP_SCALE = 0.525;
+const NAP_POD_SLEEP_HORIZONTAL_SCALE = 1.12;
 const COFFEE_MAKER_ANCHOR = { x: 0.06, y: 0.03 } as const;
 
 function fishGatherPosition(index: number): OfficeStation {
@@ -750,6 +750,7 @@ export function GameCanvas() {
                     : undefined
         }
         showStatus={!playerSleeping && !flockSeated}
+        horizontalScale={playerSleeping ? NAP_POD_SLEEP_HORIZONTAL_SCALE : 1}
         sprite={
           playerSleeping
             ? { type: "static", url: "/sprites/agents/watty-sleeping.png" }
