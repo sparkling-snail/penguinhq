@@ -25,7 +25,6 @@ postgres-data/
 # IDE
 .vscode/
 .idea/
-specs/doc_export/
 
 # Local-only notes and tool settings
 .claude/settings.local.json
