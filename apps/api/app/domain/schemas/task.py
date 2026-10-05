@@ -5,7 +5,7 @@ Pydantic schemas for the tasks API.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class TaskCreateRequest(BaseModel):

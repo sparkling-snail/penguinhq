@@ -11,7 +11,7 @@ pigeon.delivered is broadcast.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy import DateTime, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 

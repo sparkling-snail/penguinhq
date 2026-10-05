@@ -7,10 +7,9 @@ Split into two concerns on purpose: `/health` is a cheap liveness check
 milestone will point at these two separately.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
 
 from app.core.database import get_db_session
 from app.core.redis import ping_redis

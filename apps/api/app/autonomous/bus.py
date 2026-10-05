@@ -12,7 +12,7 @@ This replaces pigeon_simulator.py — pigeons become real.
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger("penguinhq.agents.bus")

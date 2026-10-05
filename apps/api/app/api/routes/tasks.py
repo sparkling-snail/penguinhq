@@ -9,7 +9,6 @@ This replaces the pigeon_simulator.py — pigeons are now real dispatch events
 flowing between agents through the DB and WebSocket.
 """
 
-import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -20,7 +19,7 @@ from app.core.database import get_db_session
 from app.domain.models.agent import Agent
 from app.domain.models.task import Task
 from app.domain.schemas.events import PigeonPayload, WSEventType, make_event
-from app.domain.schemas.task import TaskCreateRequest, TaskOut, TaskUpdateRequest
+from app.domain.schemas.task import TaskCreateRequest, TaskUpdateRequest
 from app.ws.connection_manager import connection_manager
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
