@@ -62,7 +62,7 @@ export function ResizeHandle({ sidebarWidth, onWidthChange }: ResizeHandleProps)
 
   return (
     <div
-      className="group relative flex w-1.5 shrink-0 cursor-col-resize items-center justify-center rounded-sm transition-colors hover:bg-penguin-accent/20 active:bg-penguin-accent/30"
+      className="group relative hidden w-1.5 shrink-0 cursor-col-resize items-center justify-center rounded-sm transition-colors hover:bg-penguin-accent/20 active:bg-penguin-accent/30 lg:flex"
       onMouseDown={onMouseDown}
     >
       {/* Visible grip dots */}

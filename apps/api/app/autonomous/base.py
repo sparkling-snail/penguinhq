@@ -18,9 +18,9 @@ import asyncio
 import json
 import logging
 import os
-import uuid
 from abc import ABC, abstractmethod
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import websockets
@@ -319,11 +319,9 @@ class BaseAgent(ABC):
         2. The API broadcasts pigeon.dispatched over WebSocket (pigeon flies!)
         3. Puts the message in the target agent's bus inbox (instant delivery)
         """
-        task_id = uuid.uuid4().hex[:8]
-
         # Create the task via the API (triggers pigeon.dispatched broadcast)
         try:
-            await self._http.post(
+            response = await self._http.post(
                 f"{self._api_base()}/tasks",
                 json={
                     "source_agent_id": self.id,
@@ -333,8 +331,11 @@ class BaseAgent(ABC):
                     "payload": payload,
                 },
             )
+            response.raise_for_status()
+            task_id = response.json()["task_id"]
         except Exception:
             logger.exception("[%s] failed to create task via API", self.role)
+            return ""
 
         # Also deliver directly via the bus (zero-latency)
         msg = AgentMessage(
@@ -396,6 +397,9 @@ class BaseAgent(ABC):
         in an infinite loop, never reaching their autonomous cycles.
         """
         uri = f"{self._ws_base()}/{self.role}-agent"
+        token = os.environ.get("PENGUINHQ_API_TOKEN", "")
+        if token:
+            uri = f"{uri}?access_token={quote(token, safe='')}"
         while True:
             try:
                 async with websockets.connect(uri) as ws:

@@ -7,6 +7,7 @@ import { useChatStore } from "@/stores/chatStore";
 import type { PigeonPayload } from "@/types/events";
 import type { ChatMessage } from "@/types/chat";
 import type { Agent } from "@/types/agent";
+import { IS_PUBLIC_DEMO } from "@/lib/demoData";
 
 /**
  * Mounts the shared WebSocket connection and fans incoming events out to
@@ -24,6 +25,7 @@ export function useWebSocket(): void {
   const addMessage = useChatStore((s) => s.addMessage);
 
   useEffect(() => {
+    if (IS_PUBLIC_DEMO) return;
     const socket = getPenguinSocket();
     socket.connect();
 

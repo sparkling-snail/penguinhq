@@ -19,6 +19,7 @@ from app.autonomous.bus import AgentBus
 logger = logging.getLogger("penguinhq.agents.runtime")
 
 API_BASE = os.environ.get("PENGUINHQ_API_BASE", "http://api:8000")
+API_TOKEN = os.environ.get("PENGUINHQ_API_TOKEN", "")
 
 
 # Lazy registry — imported here to avoid circular imports at module level.
@@ -71,7 +72,8 @@ class AgentRuntime:
         logger.info("PenguinHQ Agent Runtime starting...")
 
         # Shared HTTP client for all agents
-        self._http = httpx.AsyncClient(timeout=30.0)
+        headers = {"Authorization": f"Bearer {API_TOKEN}"} if API_TOKEN else {}
+        self._http = httpx.AsyncClient(timeout=30.0, headers=headers)
 
         # Shared Anthropic client (reads ANTHROPIC_API_KEY from env)
         self._anthropic = AsyncAnthropic()

@@ -6,6 +6,7 @@ import { useGameStore } from "@/stores/gameStore";
 import { getPenguinSocket } from "@/lib/websocket";
 import { api } from "@/lib/api";
 import type { ChatMessage } from "@/types/chat";
+import { IS_PUBLIC_DEMO } from "@/lib/demoData";
 
 const OFFICE_MANAGER = {
   authorId: "office-manager",
@@ -187,12 +188,15 @@ export function MessageComposer() {
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && void send()}
-        placeholder={`Message #${activeChannelId} — try /ask tech_scout <request>`}
+        disabled={IS_PUBLIC_DEMO}
+        placeholder={IS_PUBLIC_DEMO ? "Read-only portfolio demo" : `Message #${activeChannelId} — try /ask tech_scout <request>`}
         className="flex-1 rounded-md border border-penguin-border bg-white/5 px-3 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-penguin-accent"
       />
       <button
+        type="button"
+        disabled={IS_PUBLIC_DEMO}
         onClick={() => void send()}
-        className="rounded-md bg-penguin-accent px-3 py-1.5 text-sm font-medium text-slate-900 transition-opacity hover:opacity-90"
+        className="rounded-md bg-penguin-accent px-3 py-1.5 text-sm font-medium text-slate-900 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
         Send
       </button>

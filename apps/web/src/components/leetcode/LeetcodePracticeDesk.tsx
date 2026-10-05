@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { IS_PUBLIC_DEMO } from "@/lib/demoData";
 import { getPenguinSocket } from "@/lib/websocket";
 import { useChatStore } from "@/stores/chatStore";
 import type { ChatMessage } from "@/types/chat";
@@ -24,6 +25,13 @@ export function LeetcodePracticeDesk({ onClose }: LeetcodePracticeDeskProps) {
   const setActiveChannel = useChatStore((state) => state.setActiveChannel);
 
   useEffect(() => {
+    if (IS_PUBLIC_DEMO) {
+      const localDraft = window.localStorage.getItem("penguinhq.leetcode-draft");
+      if (localDraft) setCode(localDraft);
+      setStatus("Read-only demo: edits stay in this browser and no agent request is sent.");
+      setReady(true);
+      return;
+    }
     let cancelled = false;
     void api.getActivePracticeSession().then((session) => {
       if (cancelled) return;
@@ -49,8 +57,12 @@ export function LeetcodePracticeDesk({ onClose }: LeetcodePracticeDeskProps) {
     return () => { cancelled = true; };
   }, []);
 
-  const saveDraft = async (): Promise<string | null> => {
+  const saveDraft = useCallback(async (): Promise<string | null> => {
     window.localStorage.setItem("penguinhq.leetcode-draft", code);
+    if (IS_PUBLIC_DEMO) {
+      setStatus("Saved only in this browser. The public demo cannot mutate server data.");
+      return null;
+    }
     try {
       if (sessionId) {
         await api.savePracticeDraft(sessionId, { title, draft_code: code });
@@ -65,15 +77,19 @@ export function LeetcodePracticeDesk({ onClose }: LeetcodePracticeDeskProps) {
       setStatus("Couldn’t save to PenguinHQ yet. Your browser draft is still safe.");
       return null;
     }
-  };
+  }, [code, sessionId, title]);
 
   useEffect(() => {
     if (!ready) return;
     const timer = window.setTimeout(() => { void saveDraft(); }, 1200);
     return () => window.clearTimeout(timer);
-  }, [code, title, ready]); // saveDraft intentionally snapshots the current editor state
+  }, [ready, saveDraft]);
 
   const askCoach = async (request: string) => {
+    if (IS_PUBLIC_DEMO) {
+      setStatus("Agent requests are disabled in the read-only public demo.");
+      return;
+    }
     const savedSessionId = await saveDraft();
     if (!savedSessionId) return;
     try {

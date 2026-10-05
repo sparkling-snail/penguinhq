@@ -9,6 +9,7 @@ discoverable in one place and testable via `Settings(**overrides)`.
 
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +17,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     environment: str = "development"
+
+    # A single service token protects the API and inbound WebSocket messages.
+    # Local development stays frictionless when it is empty; production refuses
+    # to start without it. Public portfolio deployments expose the static demo
+    # frontend, not this token or the private API.
+    api_access_token: SecretStr = SecretStr("")
+    allowed_hosts: str = "localhost,127.0.0.1,testserver"
+    auto_create_schema: bool = True
 
     # Postgres
     database_url: str = "postgresql+asyncpg://penguin:penguin@localhost:5432/penguinhq"
@@ -29,6 +38,18 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def allowed_host_list(self) -> list[str]:
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
+
+    @property
+    def api_token(self) -> str:
+        return self.api_access_token.get_secret_value()
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.lower() == "production"
 
 
 @lru_cache

@@ -1,0 +1,102 @@
+name: penguinhq-production
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-penguin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-penguinhq}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-penguin} -d ${POSTGRES_DB:-penguinhq}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [private]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [private]
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-penguin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-penguinhq}
+      REDIS_URL: redis://redis:6379/0
+      API_ACCESS_TOKEN: ${PENGUINHQ_API_TOKEN:?Set PENGUINHQ_API_TOKEN in .env.production}
+      AUTO_CREATE_SCHEMA: "false"
+      ALLOWED_HOSTS: api,localhost,127.0.0.1
+      CORS_ORIGINS: ${SITE_URL:-http://localhost}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [private]
+
+  agent-runner:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "app.autonomous"]
+    environment:
+      PENGUINHQ_API_BASE: http://api:8000
+      PENGUINHQ_WS_BASE: ws://api:8000/ws
+      PENGUINHQ_API_TOKEN: ${PENGUINHQ_API_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [private]
+    profiles: [agents]
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_DEMO_MODE: "true"
+        NEXT_PUBLIC_SITE_URL: ${SITE_URL:-http://localhost}
+    restart: unless-stopped
+    networks: [public]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+    networks: [public]
+
+networks:
+  public:
+  private:
+    internal: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

@@ -16,13 +16,13 @@ The system is a development-stage modular monolith split across a browser applic
 ┌──────────────────────────────┐
 │ FastAPI API                  │
 │ routes + persistence +       │
-│ process-local event fan-out  │
+│ authenticated event fan-out  │
 └──────┬───────────┬───────────┘
        │           │
        ▼           ▼
 ┌─────────────┐  ┌─────────────┐
 │ PostgreSQL  │  │ Redis       │
-│ durable data│  │ health only │
+│ durable data│  │ pub/sub     │
 └─────────────┘  └─────────────┘
        ▲
        │ HTTP
@@ -46,7 +46,7 @@ There are five Docker Compose services:
 | `api` | REST API, WebSocket endpoint, database access, and event fan-out | 8000 |
 | `agent-runner` | Runs all autonomous agents in one Python process | None |
 | `postgres` | Durable application state | 5432 |
-| `redis` | Connectivity/readiness check; reserved for future coordination | 6379 |
+| `redis` | Readiness plus cross-replica WebSocket event pub/sub | 6379 |
 
 The API and agent runner share the same Python image and source tree but have separate process lifecycles. The agent runner communicates with the API over its public HTTP and WebSocket interfaces rather than importing API route logic directly.
 
@@ -68,10 +68,10 @@ apps/api/app/
 │   ├── bus.py                  # in-process task router
 │   ├── runtime.py              # discovery, construction, supervision
 │   └── agents/                 # four specialized agents
-└── ws/connection_manager.py    # process-local WebSocket registry
+└── ws/connection_manager.py    # local sockets + Redis pub/sub fan-out
 ```
 
-FastAPI's lifespan initializes database tables and seeds the four agents if the `agents` table is empty. There is currently no migration framework; schema evolution depends on application initialization and manual database management.
+FastAPI's lifespan initializes tables only when the development-only `AUTO_CREATE_SCHEMA` setting is enabled, then seeds the four agents if the `agents` table is empty. Production runs the Alembic migration history before API startup and sets `AUTO_CREATE_SCHEMA=false`.
 
 ## Autonomous-agent runtime
 
@@ -189,7 +189,7 @@ The API resolves `destination_role` to a persisted agent, creates a task with `p
 This design separates the durable task ledger from low-latency delivery, but it currently has two important limitations:
 
 1. `AgentBus` queues exist only in the agent-runner process. Pending database tasks are not reclaimed after a restart.
-2. `BaseAgent.dispatch_task()` generates a short bus task ID independently of the UUID returned by `POST /tasks`. The receiver can therefore attempt to complete an ID that does not match the persisted row. Until those IDs are unified, persisted completion and `pigeon.delivered` are not reliable.
+2. There are no worker leases or idempotent task claims yet, so a future durable worker will need explicit retry and dead-letter semantics.
 
 ## API surface
 
@@ -206,7 +206,7 @@ This design separates the durable task ledger from low-latency delivery, but it 
 | Hooks | `POST /hooks/event` | Map external coding-tool activity to agent state |
 | WebSocket | `/ws/{client_id}` | Real-time chat and server event fan-out |
 
-The current API has no authentication or authorization. CORS restricts supported browser origins but does not protect endpoints from direct clients. This stack must not be exposed directly to the public internet.
+In production, every non-health HTTP route requires the configured bearer service token. WebSocket clients can observe events, but publishing chat requires the same token. This authenticates trusted processes; it is not end-user identity or row-level authorization. The recommended public deployment therefore exposes only the read-only demo frontend and keeps the API on an internal network.
 
 ## Real-time event model
 
@@ -231,7 +231,7 @@ Supported event types are:
 | `pigeon.delivered` | Task completion | Removes the matching pigeon |
 | `agent.moved` | Reserved in the schema | No primary producer in the current backend |
 
-`ConnectionManager` stores active sockets in API-process memory. It removes dead sockets during broadcast. This works for a single API process; multiple API workers would each see only their own clients. Redis pub/sub is not currently used to bridge processes.
+`ConnectionManager` stores sockets local to each API process and removes dead connections during fan-out. Broadcasts publish to a Redis channel; every API replica subscribes and forwards each event to its own sockets. Development falls back to local broadcast when Redis is unavailable.
 
 Chat broadcasts are ephemeral. Browser chat is fanned out but not stored as a chat transcript. Agent memory is persisted separately when an autonomous agent handles or emits a message.
 
@@ -282,21 +282,20 @@ Session-to-agent assignments are stored in API-process memory and reset when the
 - API settings use `pydantic-settings`; autonomous integrations also read environment variables directly.
 - Source directories are bind-mounted for local hot reload.
 - PostgreSQL and Redis publish host ports and use development defaults unless `.env` overrides them.
-- There is no production reverse proxy, TLS termination, user identity, service authentication, rate limiter, or secret manager in this repository.
+- The production Compose topology keeps data/API services private and publishes the read-only demo through Caddy with TLS and security headers.
+- Production has service authentication, but no end-user identity, per-user authorization, rate limiter, or external secret manager.
 
 ## Reliability and scaling boundaries
 
-The current architecture intentionally favors a simple single-host development experience. Before production use, the main boundaries to address are:
+The current architecture intentionally favors a simple single-host experience. Before exposing the interactive backend to untrusted users, the main boundaries to address are:
 
-- Authenticate users, internal services, HTTP mutations, and WebSocket clients.
-- Unify the API task UUID with the ID delivered through `AgentBus`.
+- Add end-user authentication, authorization, abuse prevention, and rate limits.
 - Replace or augment the in-memory bus with restart-safe task claiming.
-- Use Redis pub/sub or another broker for multi-process WebSocket delivery.
 - Move quotas into atomic counters rather than fact-store read/modify/write operations.
-- Add database migrations and stronger relational constraints.
+- Add stronger relational constraints where application-level identity is currently trusted.
 - Separate conversation memory from autonomous activity history.
 - Add structured telemetry for cycles, external calls, task latency, tokens, and cost.
 - Generate or validate shared frontend/backend contracts.
-- Add automated unit, integration, and end-to-end tests.
+- Add database-backed integration tests and browser end-to-end tests.
 
 These are explicit constraints of the current implementation, not capabilities supplied implicitly by PostgreSQL or Redis.

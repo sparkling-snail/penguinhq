@@ -5,10 +5,9 @@ We use SQLAlchemy 2.0's async ORM with asyncpg as the driver. FastAPI
 endpoints depend on `get_db_session` to receive a scoped session per
 request, which is the standard "unit of work per request" pattern.
 
-Migrations: for Milestone 1 we call `Base.metadata.create_all` on startup
-so the schema exists for local dev. A real migration history (Alembic)
-lands in the persistence-hardening milestone — hand-editing tables in prod
-is not something we ever want to reach for.
+Local development can still call `Base.metadata.create_all` on startup for
+convenience. Production disables that path and runs Alembic migrations from
+the container entrypoint instead.
 """
 
 from collections.abc import AsyncGenerator
@@ -40,6 +39,8 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Create tables that don't exist yet. Dev-only convenience — see docstring above."""
+    """Create missing tables only when the explicit dev convenience is enabled."""
+    if not settings.auto_create_schema:
+        return
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

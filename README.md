@@ -4,9 +4,15 @@
 
 **A multi-agent AI system you can watch.** Four autonomous Claude-powered agents run around the clock — hunting for jobs, scouting new tech, coaching interview practice, and tracking applications — and each one is a penguin in a live virtual office. When agents hand work to each other, a messenger pigeon flies across the room.
 
+![PenguinHQ virtual office showing autonomous AI agents at their workstations](docs/images/penguinhq-office.jpg)
+
+*The live office turns agent state, collaboration, and background work into an interactive visual workspace.*
+
 Under the hood it is a real distributed-ish system: a FastAPI backend, a separate agent-runner process with four concurrent `asyncio` agents, PostgreSQL as the task ledger, MCP tool integrations for live data, and a WebSocket event stream that drives a Next.js front end.
 
-> Built for local use. It does not yet include authentication or production deployment hardening — see [Current limitations](#current-limitations).
+**Portfolio walkthrough:** [case study](docs/CASE_STUDY.md) · [architecture](ARCHITECTURE.md) · [safe deployment](docs/DEPLOYMENT.md) · [60-second demo script](docs/DEMO_SCRIPT.md) · [security model](SECURITY.md)
+
+> The public build is a deterministic, read-only showcase. The live agent backend remains private and is protected with service authentication; see [Current limitations](#current-limitations) for the boundary between service auth and full user auth.
 
 ## Engineering highlights
 
@@ -14,6 +20,9 @@ Under the hood it is a real distributed-ish system: a FastAPI backend, a separat
 - **Two-path task dispatch.** An inter-agent task is delivered instantly through an in-process `AgentBus` *and* persisted through the API, which broadcasts `pigeon.dispatched` / `pigeon.delivered` events. The database is the source of truth; the visual is a projection of it.
 - **Real tools over MCP.** Job Hunter calls an Apify LinkedIn actor and Tech Scout calls Tavily search through MCP clients, with tolerant parsing of tool output and per-day budgets stored as agent facts so a restart can't overspend.
 - **Typed real-time contract.** Every live update is a typed WebSocket envelope mirrored between Pydantic and TypeScript. The browser client reconnects with capped exponential backoff after a backend restart.
+- **Cross-replica events.** API replicas publish WebSocket events through Redis pub/sub and fan them out to their own connected clients, with a process-local fallback for development.
+- **Safe portfolio mode.** A build-time demo flag supplies sanitized state and disables network mutations, while the recommended reverse proxy exposes only Next.js—not the private API or data stores.
+- **Production schema workflow.** Alembic owns database migrations; production containers migrate before startup and never rely on runtime `create_all`.
 - **Smooth animation without React churn.** Agent movement lives in refs and is written straight to the DOM; the Zustand store only holds what React needs to re-render (roster, pigeons, speech bubbles).
 - **Claude Code integration.** A hook script turns your own Claude Code session into a penguin: editing makes it code, `Bash` makes it debug, web search makes it research (see [Watch your Claude Code session](#watch-your-claude-code-session)).
 - **Safe failure modes.** LLM errors are mapped to short, actionable messages without echoing raw provider error text, and each missing integration disables only the capability that depends on it.
@@ -52,7 +61,7 @@ Browser
                            ▼
                     FastAPI service
                      ├── PostgreSQL
-                     ├── Redis health check
+                     ├── Redis pub/sub
                      └── WebSocket fan-out
                            ▲
                            │ HTTP + WebSocket
@@ -94,6 +103,9 @@ penguinhq/
 │           └── types/               # frontend wire types
 ├── packages/shared-types/           # shared contract documentation/types
 ├── docker-compose.yml
+├── docker-compose.prod.yml          # read-only public demo topology
+├── deploy/Caddyfile                 # TLS, reverse proxy, security headers
+├── docs/                            # case study, deployment, demo, art notes
 └── .env.example
 ```
 
@@ -183,6 +195,18 @@ npm run dev
 
 When running outside Docker, ensure `DATABASE_URL`, `REDIS_URL`, `PENGUINHQ_API_BASE`, and `PENGUINHQ_WS_BASE` point to locally reachable services.
 
+## Public portfolio deployment
+
+The production topology builds the frontend with `NEXT_PUBLIC_DEMO_MODE=true`, keeps API/data services on an internal network, runs schema migrations, and serves the site through Caddy with automatic HTTPS:
+
+```bash
+cp .env.production.example .env.production
+docker compose -f docker-compose.prod.yml --env-file .env.production config
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+Replace every placeholder secret and hostname first. The full checklist, update flow, rollback notes, and boundary for a live interactive deployment are in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 ## Health checks
 
 ```bash
@@ -205,6 +229,7 @@ cd apps/api
 pip install -r requirements-dev.txt
 ruff check .
 pytest
+alembic heads
 ```
 
 Frontend (lint, type check, unit tests, production build):
@@ -238,17 +263,21 @@ The script posts in the background with a 2-second timeout, so an unreachable AP
 
 ## Current limitations
 
-- API routes and WebSocket connections are not authenticated; do not expose the development stack directly to the internet.
+- The bearer token authenticates trusted services, not individual users. A public interactive backend still needs OIDC/session auth, per-user authorization, rate limiting, and abuse/cost controls.
 - Agent task delivery uses an in-memory queue even though task records are persisted.
 - Agent facts are scoped per agent rather than shared as a single user or candidate profile.
-- WebSocket fan-out is process-local and does not yet use Redis pub/sub.
-- Database tables are initialized by the application; there is no migration workflow yet.
 - Backend and frontend event contracts still require some manual synchronization.
 - Search quality and availability depend on external MCP providers and their actor/tool schemas.
+- Chat fan-out is ephemeral; agent memory is durable, but it is not a complete chat transcript.
 
 ## Further documentation
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) contains deeper implementation notes, though some sections may lag behind the source during active development.
+- [`docs/CASE_STUDY.md`](docs/CASE_STUDY.md) frames the engineering problem, decisions, trade-offs, and next steps.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) contains the deeper implementation reference.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) documents the safe public topology and operational workflow.
+- [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) is a publish-ready shot list and privacy checklist for the demo video/GIF.
+- [`SECURITY.md`](SECURITY.md) describes service authentication, secret handling, and vulnerability reporting.
+- [`docs/ART_ASSETS.md`](docs/ART_ASSETS.md) records the visual-identity risk and original-art migration plan.
 
 For current behavior, the source code, `.env.example`, and this README are authoritative.
 
@@ -256,7 +285,7 @@ For current behavior, the source code, `.env.example`, and this README are autho
 
 PenguinHQ is an independent, non-commercial portfolio project. It is **not affiliated with, endorsed by, or sponsored by Disney or Club Penguin**. "Club Penguin" is a trademark of Disney.
 
-The penguin character sprites are AI-generated fan art inspired by the style of Club Penguin. They are included for demonstration only and are **not** covered by this repository's license. The office furniture and props are original AI-generated artwork. If you are a rights holder and would like something changed or removed, please open an issue.
+The penguin character sprites are AI-generated fan art inspired by the style of Club Penguin. They are included for demonstration only and are **not** covered by this repository's license. The office furniture, background, and social preview are original AI-generated artwork. See [`docs/ART_ASSETS.md`](docs/ART_ASSETS.md) for provenance guidance and the original-character replacement plan. If you are a rights holder and would like something changed or removed, please open an issue.
 
 ## Acknowledgements
 

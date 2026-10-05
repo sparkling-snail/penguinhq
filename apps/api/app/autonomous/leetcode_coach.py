@@ -41,6 +41,7 @@ import asyncio
 import json
 import logging
 import os
+from urllib.parse import quote
 
 import httpx
 import websockets
@@ -55,6 +56,7 @@ MODEL = os.environ.get("LEETCODE_COACH_MODEL", "claude-haiku-4-5-20251001")
 CYCLE_SECONDS = int(os.environ.get("LEETCODE_COACH_INTERVAL_SECONDS", "120"))
 CHAT_CHANNEL = "leetcode"
 MEMORY_FETCH_LIMIT = int(os.environ.get("LEETCODE_COACH_MEMORY_LIMIT", "16"))
+API_TOKEN = os.environ.get("PENGUINHQ_API_TOKEN", "")
 
 client = AsyncAnthropic()  # reads ANTHROPIC_API_KEY from the environment
 
@@ -202,6 +204,8 @@ async def listen_for_messages(agent: dict, queue: "asyncio.Queue[str]") -> None:
     alongside the main loop, reconnecting on drop — this is what makes
     the agent interruptible instead of a pure one-way broadcast."""
     uri = f"{WS_BASE}/leetcode-coach-agent"
+    if API_TOKEN:
+        uri = f"{uri}?access_token={quote(API_TOKEN, safe='')}"
     while True:
         try:
             async with websockets.connect(uri) as ws:
@@ -222,7 +226,8 @@ async def listen_for_messages(agent: dict, queue: "asyncio.Queue[str]") -> None:
 
 
 async def main() -> None:
-    async with httpx.AsyncClient(timeout=30.0) as http:
+    headers = {"Authorization": f"Bearer {API_TOKEN}"} if API_TOKEN else {}
+    async with httpx.AsyncClient(timeout=30.0, headers=headers) as http:
         agent = await find_agent(http)
         logger.info("autonomous loop starting for agent %s (%s)", agent["name"], agent["id"])
 

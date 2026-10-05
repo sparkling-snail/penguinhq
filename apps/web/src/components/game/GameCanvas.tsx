@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Character, type CharacterHandle, type SpriteDirection } from "./Character";
 import { PigeonSprite } from "./PigeonSprite";
 import { PigeonTooltip } from "./PigeonTooltip";
@@ -544,42 +545,42 @@ export function GameCanvas() {
   const tableMeetingSlot = (slotIndex: number): TableMeetingSlot =>
     TABLE_MEETING_SLOTS[slotIndex % TABLE_MEETING_SLOTS.length]!;
 
-  const tableMeetingZIndex = (slotIndex: number): number => {
+  const tableMeetingZIndex = useCallback((slotIndex: number): number => {
     const table = collaborationTable ?? { x: 59, y: 91, width: 25 };
     const tableZIndex = Math.round(table.y * 100) - 1;
     return tableMeetingSlot(slotIndex).depth === "rear" ? tableZIndex - 2 : tableZIndex + 3;
-  };
+  }, [collaborationTable]);
 
-  const tableMeetingPosition = (slotIndex: number): OfficeStation => {
+  const tableMeetingPosition = useCallback((slotIndex: number): OfficeStation => {
     const table = collaborationTable ?? { x: 59, y: 91, width: 25 };
     const anchor = tableMeetingSlot(slotIndex);
     return {
       x: table.x + table.width * anchor.x,
       y: table.y + table.width * anchor.y * PROP_WIDTH_TO_ROOM_Y,
     };
-  };
+  }, [collaborationTable]);
 
-  const sleepingPosition = (): OfficeStation => {
+  const sleepingPosition = useCallback((): OfficeStation => {
     const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
     return {
       x: pod.x + pod.width * NAP_POD_SLEEP_ANCHOR.x,
       y: pod.y + pod.width * NAP_POD_SLEEP_ANCHOR.y * PROP_WIDTH_TO_ROOM_Y,
     };
-  };
+  }, [napPod]);
 
-  const portfolioSleepingPosition = (): OfficeStation => {
+  const portfolioSleepingPosition = useCallback((): OfficeStation => {
     const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
     const position = sleepingPosition();
     return { x: position.x + pod.width * 0.04, y: position.y };
-  };
+  }, [napPod, sleepingPosition]);
 
-  const coffeeMakerPosition = (): OfficeStation => {
+  const coffeeMakerPosition = useCallback((): OfficeStation => {
     const nook = coffeeNook ?? { x: 75.7, y: 67.1, width: 22.5 };
     return {
       x: nook.x + nook.width * COFFEE_MAKER_ANCHOR.x,
       y: nook.y + nook.width * COFFEE_MAKER_ANCHOR.y,
     };
-  };
+  }, [coffeeNook]);
 
   useEffect(() => {
     if (coffeePhase !== "grinding" && coffeePhase !== "pouring" && coffeePhase !== "sipping") return;
@@ -1137,7 +1138,7 @@ export function GameCanvas() {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [agentList, officeEvent, flockSeated, flockWalkingToSeats, flockAtTable, playerSleeping, coffeePhase, serverRepairPhase, lunaRoutine, autonomyBeat, collaborationTable, developerSeatPosition, researchSeatPosition, planningBoardPosition, serverRepairPosition, napPod, coffeeNook]);
+  }, [agentList, officeEvent, flockSeated, flockWalkingToSeats, flockAtTable, playerSleeping, coffeePhase, serverRepairPhase, lunaRoutine, autonomyBeat, collaborationTable, developerSeatPosition, researchSeatPosition, planningBoardPosition, serverRepairPosition, napPod, coffeeNook, coffeeMakerPosition, portfolioSleepingPosition, sleepingPosition, tableMeetingPosition, tableMeetingZIndex]);
 
   const beginPropDrag = (event: React.PointerEvent<HTMLButtonElement>, prop: OfficeProp) => {
     const room = roomRef.current;
@@ -1289,7 +1290,7 @@ export function GameCanvas() {
               transform: `translate(-50%, -100%) translate(${prop.renderOffset?.x ?? 0}%, ${prop.renderOffset?.y ?? 0}%) rotate(${prop.renderRotation ?? 0}deg) scale(${prop.renderScale ?? 1})`,
             }}
           >
-            <img
+            <Image
               src={
                 ((prop.id === "research-workstation" && researchAgentSeated) ||
                   (prop.id === "desk" && developerAgentSeated)) &&
@@ -1299,6 +1300,9 @@ export function GameCanvas() {
               }
               alt=""
               draggable={false}
+              width={512}
+              height={512}
+              unoptimized
               className={`block h-auto w-full ${
                 prop.id === "desk" && developerAgentSeated
                   ? "office-developer-working"

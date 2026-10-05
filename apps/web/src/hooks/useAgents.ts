@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { api } from "@/lib/api";
 import { useGameStore } from "@/stores/gameStore";
+import { DEMO_AGENTS, IS_PUBLIC_DEMO } from "@/lib/demoData";
 
 /**
  * Fetches the agent roster over HTTP on mount, then hands off to
@@ -18,6 +19,8 @@ export function useAgents() {
   const query = useQuery({
     queryKey: ["agents"],
     queryFn: api.listAgents,
+    initialData: DEMO_AGENTS,
+    enabled: !IS_PUBLIC_DEMO,
     staleTime: 30_000,
   });
 

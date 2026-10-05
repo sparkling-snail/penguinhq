@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AgentState } from "@/types/agent";
 
@@ -248,11 +249,14 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
                   : ""
             }`}
           >
-            <img
+            <Image
               ref={spriteRef}
               src={initialSrc}
               alt={name}
               draggable={false}
+              width={256}
+              height={256}
+              unoptimized
               className="h-full w-auto select-none"
               style={{
                 transformOrigin: "bottom center",

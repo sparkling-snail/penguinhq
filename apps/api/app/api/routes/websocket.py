@@ -18,6 +18,8 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core.config import get_settings
+from app.core.security import is_valid_token
 from app.domain.schemas.events import ConnectionAckPayload, WSEventType, make_event
 from app.ws.connection_manager import connection_manager
 
@@ -28,6 +30,9 @@ router = APIRouter(tags=["websocket"])
 
 @router.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
+    settings = get_settings()
+    token = websocket.query_params.get("access_token")
+    can_publish = (not settings.api_token and not settings.is_production) or is_valid_token(token)
     await connection_manager.connect(client_id, websocket)
     await connection_manager.send_to(
         client_id,
@@ -40,7 +45,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
             event_type = data.get("type")
 
             if event_type == "chat.message":
-                # Milestone 1: pure fan-out, no persistence yet.
+                if not can_publish:
+                    await websocket.send_json(
+                        {"type": "error", "payload": {"message": "Read-only connection"}}
+                    )
+                    continue
                 await connection_manager.broadcast(
                     make_event(WSEventType.CHAT_MESSAGE, data.get("payload", {}))
                 )

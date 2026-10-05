@@ -10,7 +10,12 @@
 # latency to the tool call this hook is attached to.
 
 payload=$(cat)
+auth_args=()
+if [ -n "${PENGUINHQ_API_TOKEN:-}" ]; then
+  auth_args=(-H "Authorization: Bearer ${PENGUINHQ_API_TOKEN}")
+fi
 (curl -s --max-time 2 -X POST http://localhost:8000/hooks/event \
   -H "Content-Type: application/json" \
+  "${auth_args[@]}" \
   -d "$payload" >/dev/null 2>&1 &)
 exit 0

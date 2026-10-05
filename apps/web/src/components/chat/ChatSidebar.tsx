@@ -20,7 +20,7 @@ export function ChatSidebar({ width = 320, onOpenPracticeDesk }: ChatSidebarProp
   const activeChannelId = useChatStore((s) => s.activeChannelId);
 
   return (
-    <aside className="glass-panel flex h-full shrink-0 flex-col" style={{ width }}>
+    <aside className="glass-panel flex h-[40dvh] shrink-0 flex-col max-lg:!w-full lg:h-full" style={{ width }}>
       <div className="flex items-center justify-between gap-2 border-b border-penguin-border px-3 py-2.5">
         <span className="text-sm font-semibold text-slate-100">PenguinHQ</span>
         <div className="flex items-center gap-1.5">
