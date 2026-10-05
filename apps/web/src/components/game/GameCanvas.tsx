@@ -9,7 +9,7 @@ import type { Agent, AgentState } from "@/types/agent";
 
 // Room art is a fixed 1470x1070 screenshot (office-background.png) —
 // everything below is a percentage of that box, the same coordinate
-// system Claude-Office uses for its office room, so nothing needs
+// system Claude-Office (github.com/W17ant/Claude-Office, MIT) uses for its office room, so nothing needs
 // recomputing on resize.
 const ROOM_ASPECT_RATIO = "1470 / 1070";
 const ROOM_ART_WIDTH = 1470;

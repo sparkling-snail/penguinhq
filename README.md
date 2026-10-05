@@ -258,6 +258,10 @@ PenguinHQ is an independent, non-commercial portfolio project. It is **not affil
 
 The penguin character sprites are AI-generated fan art inspired by the style of Club Penguin. They are included for demonstration only and are **not** covered by this repository's license. The office furniture and props are original AI-generated artwork. If you are a rights holder and would like something changed or removed, please open an issue.
 
+## Acknowledgements
+
+The office renderer and Claude Code hook bridge are adapted from [Claude-Office](https://github.com/W17ant/Claude-Office) by W17ANT (MIT). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## License
 
 The source code is released under the [MIT License](LICENSE). Image assets under `apps/web/public/` are excluded — see [Art and trademarks](#art-and-trademarks).

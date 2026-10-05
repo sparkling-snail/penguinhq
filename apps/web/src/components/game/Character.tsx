@@ -12,7 +12,7 @@ export type SpriteDirection = "front-left" | "front-right" | "rear-left" | "rear
  *  - "directional": four separate images, one per facing (what the named
  *    agent sprites use — Bluey/Kip/Luna/Ziggy each ship as
  *    `{base}-{direction}.webp`), swapped based on movement direction
- *    instead of flipped, matching Claude-Office's actual convention.
+ *    instead of flipped, matching Claude-Office's convention (see THIRD_PARTY_NOTICES.md).
  */
 export type CharacterSprite =
   | { type: "static"; url: string }

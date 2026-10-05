@@ -1,4 +1,5 @@
 #!/bin/bash
+# Adapted from Claude-Office (github.com/W17ant/Claude-Office, MIT).
 # Forwards a Claude Code hook payload (read from stdin, per Claude Code's
 # hook JSON contract: session_id, hook_event_name, tool_name, ...) to
 # PenguinHQ's API, which maps it to an agent state change and broadcasts
