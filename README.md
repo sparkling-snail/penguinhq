@@ -1,8 +1,26 @@
 # PenguinHQ
 
-PenguinHQ is an interactive AI workspace where autonomous agents appear as penguins in a virtual office. The agents run continuously, talk with the user, retain memory and structured facts, collaborate through tasks, and expose their activity to the frontend in real time.
+[![CI](https://github.com/sparkling-snail/penguinhq/actions/workflows/ci.yml/badge.svg)](https://github.com/sparkling-snail/penguinhq/actions/workflows/ci.yml)
 
-The project is under active development. It is designed for local use and does not yet include authentication or production deployment hardening.
+**A multi-agent AI system you can watch.** Four autonomous Claude-powered agents run around the clock — hunting for jobs, scouting new tech, coaching interview practice, and tracking applications — and each one is a penguin in a live virtual office. When agents hand work to each other, a messenger pigeon flies across the room.
+
+Under the hood it is a real distributed-ish system: a FastAPI backend, a separate agent-runner process with four concurrent `asyncio` agents, PostgreSQL as the task ledger, MCP tool integrations for live data, and a WebSocket event stream that drives a Next.js front end.
+
+> Built for local use. It does not yet include authentication or production deployment hardening — see [Current limitations](#current-limitations).
+
+## Engineering highlights
+
+- **Concurrent autonomous agents.** Each agent is its own `asyncio.Task` with a priority loop — human chat beats inter-agent tasks, which beat the autonomous cycle — so the office stays responsive while agents work in the background.
+- **Two-path task dispatch.** An inter-agent task is delivered instantly through an in-process `AgentBus` *and* persisted through the API, which broadcasts `pigeon.dispatched` / `pigeon.delivered` events. The database is the source of truth; the visual is a projection of it.
+- **Real tools over MCP.** Job Hunter calls an Apify LinkedIn actor and Tech Scout calls Tavily search through MCP clients, with tolerant parsing of tool output and per-day budgets stored as agent facts so a restart can't overspend.
+- **Typed real-time contract.** Every live update is a typed WebSocket envelope mirrored between Pydantic and TypeScript. The browser client reconnects with capped exponential backoff after a backend restart.
+- **Smooth animation without React churn.** Agent movement lives in refs and is written straight to the DOM; the Zustand store only holds what React needs to re-render (roster, pigeons, speech bubbles).
+- **Claude Code integration.** A hook script turns your own Claude Code session into a penguin: editing makes it code, `Bash` makes it debug, web search makes it research (see [Watch your Claude Code session](#watch-your-claude-code-session)).
+- **Safe failure modes.** LLM errors are mapped to short, actionable messages without echoing raw provider error text, and each missing integration disables only the capability that depends on it.
+
+## Tech stack
+
+Next.js 14 · React 18 · TypeScript · Zustand · Tailwind CSS · FastAPI · SQLAlchemy 2 (async) · PostgreSQL · Redis · Anthropic API · Model Context Protocol (Apify, Tavily) · Docker Compose · Vitest · pytest · GitHub Actions
 
 ## What it does
 
@@ -176,22 +194,47 @@ curl http://localhost:8000/jobs
 
 `/health` is the liveness endpoint. `/health/ready` verifies PostgreSQL and reports Redis connectivity.
 
-## Development checks
+## Tests and checks
 
-Backend syntax check:
+Every push and pull request runs the same checks in [GitHub Actions](.github/workflows/ci.yml).
 
-```bash
-python3 -m compileall -q apps/api/app
-```
-
-Frontend type check and production build:
+Backend (lint + unit tests; no database or API keys needed):
 
 ```bash
-pnpm --filter @penguinhq/web typecheck
-pnpm --filter @penguinhq/web build
+cd apps/api
+pip install -r requirements-dev.txt
+ruff check .
+pytest
 ```
 
-The repository does not currently have a comprehensive automated test suite.
+Frontend (lint, type check, unit tests, production build):
+
+```bash
+cd apps/web
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+The unit tests cover the agent bus, WebSocket fan-out, the Claude Code hook mapping, job-listing parsing and filtering, daily quota handling, LLM error sanitization, the browser WebSocket client's reconnect behavior, and the game store.
+
+## Watch your Claude Code session
+
+`hooks/agent-tracker.sh` forwards Claude Code hook events to `POST /hooks/event`. The API assigns each session to a non-autonomous penguin and animates it based on the tool being used. To enable it, add this to your project's `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/hooks/agent-tracker.sh" }] }],
+    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/hooks/agent-tracker.sh" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/hooks/agent-tracker.sh" }] }]
+  }
+}
+```
+
+The script posts in the background with a 2-second timeout, so an unreachable API never slows down your session.
 
 ## Current limitations
 
@@ -206,6 +249,15 @@ The repository does not currently have a comprehensive automated test suite.
 ## Further documentation
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) contains deeper implementation notes, though some sections may lag behind the source during active development.
-- [`HANDOVER.md`](HANDOVER.md) is a dated development snapshot and should not be treated as the canonical setup guide.
 
 For current behavior, the source code, `.env.example`, and this README are authoritative.
+
+## Art and trademarks
+
+PenguinHQ is an independent, non-commercial portfolio project. It is **not affiliated with, endorsed by, or sponsored by Disney or Club Penguin**. "Club Penguin" is a trademark of Disney.
+
+The penguin character sprites are AI-generated fan art inspired by the style of Club Penguin. They are included for demonstration only and are **not** covered by this repository's license. The office furniture and props are original AI-generated artwork. If you are a rights holder and would like something changed or removed, please open an issue.
+
+## License
+
+The source code is released under the [MIT License](LICENSE). Image assets under `apps/web/public/` are excluded — see [Art and trademarks](#art-and-trademarks).
