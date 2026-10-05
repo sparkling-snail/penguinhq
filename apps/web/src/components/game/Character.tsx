@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AgentState } from "@/types/agent";
 
@@ -170,11 +169,19 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
         applyTransform();
         return;
       }
+
+      // A pose change is committed by React just after the game loop detects
+      // it. During that single transition frame, the previous directional
+      // handle can receive the static sprite's boolean facing value. Ignore
+      // it rather than indexing the direction map with `false` and assigning
+      // the browser a literal `undefined` image URL.
+      if (typeof input !== "string") return;
       const direction = input as SpriteDirection;
       if (direction === lastDirectionRef.current) return;
       lastDirectionRef.current = direction;
       const img = spriteRef.current;
-      if (img && directionalUrls) img.src = directionalUrls[direction];
+      const nextSrc = directionalUrls?.[direction];
+      if (img && nextSrc) img.src = nextSrc;
     },
     setState(next) {
       setState(next);
@@ -249,14 +256,18 @@ export const Character = forwardRef<CharacterHandle, CharacterProps>(function Ch
                   : ""
             }`}
           >
-            <Image
+            {/* Character sprites change source imperatively as the game loop
+                changes direction and pose. A native image is intentional here:
+                Next/Image owns the rendered src and can overwrite those live
+                updates, leaving state-transition sprites (such as sleeping
+                Portfolio Penguin) broken. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              key={initialSrc}
               ref={spriteRef}
               src={initialSrc}
               alt={name}
               draggable={false}
-              width={256}
-              height={256}
-              unoptimized
               className="h-full w-auto select-none"
               style={{
                 transformOrigin: "bottom center",

@@ -388,8 +388,6 @@ const PROP_WIDTH_TO_ROOM_Y = ROOM_ART_WIDTH / ROOM_ART_HEIGHT;
 // The sleeping illustration is wide (1431x970), unlike the upright square
 // poses. Anchor its bottom edge on the mattress and use a dedicated scale.
 const NAP_POD_SLEEP_ANCHOR = { x: -0.01, y: -0.34 } as const;
-const NAP_POD_SLEEP_SCALE = 0.63525;
-const NAP_POD_SLEEP_HORIZONTAL_SCALE = 1.3552;
 // Ziggy's generated sleeping canvas is much wider and has more transparent
 // headroom than Watty's. Normalize the visible silhouette for the same pod.
 const PORTFOLIO_SLEEP_SCALE = 0.5248;
@@ -468,7 +466,6 @@ export function GameCanvas() {
   const [selectedPropId, setSelectedPropId] = useState<string | null>(null);
   const [flockSeated, setFlockSeated] = useState(false);
   const [flockWalkingToSeats, setFlockWalkingToSeats] = useState(false);
-  const [playerSleeping, setPlayerSleeping] = useState(false);
   const [coffeePhase, setCoffeePhase] = useState<CoffeePhase | null>(null);
   const [serverRepairPhase, setServerRepairPhase] = useState<ServerRepairPhase | null>(null);
   const [researchAgentSeated, setResearchAgentSeated] = useState(false);
@@ -786,21 +783,19 @@ export function GameCanvas() {
 
       if (coffeePhase && (dx !== 0 || dy !== 0)) setCoffeePhase(null);
       const walkingToCoffee = coffeePhase === "approaching";
-      const playerMoving = !flockSeated && !playerSleeping && !walkingToCoffee && (dx !== 0 || dy !== 0);
+      const playerMoving = !flockSeated && !walkingToCoffee && (dx !== 0 || dy !== 0);
       playerRef.current?.setState(
-        playerSleeping
-          ? "sleeping"
-          : flockAtTable
-            ? "meeting"
-            : flockWalkingToSeats
-              ? "walking"
-            : walkingToCoffee
-              ? "walking"
-              : coffeePhase
-                ? "waiting"
-                : playerMoving
-                  ? "walking"
-                  : "idle"
+        flockAtTable
+          ? "meeting"
+          : flockWalkingToSeats
+            ? "walking"
+          : walkingToCoffee
+            ? "walking"
+            : coffeePhase
+              ? "waiting"
+              : playerMoving
+                ? "walking"
+                : "idle"
       );
 
       if (flockWalkingToSeats) {
@@ -846,34 +841,23 @@ export function GameCanvas() {
       }
 
       playerBobPhase.current += delta * 0.08;
-      const playerDisplayPosition = playerSleeping
-        ? sleepingPosition()
-        : flockAtTable
-          ? tableMeetingPosition(WATTY_TABLE_SLOT_INDEX)
-          : playerPos.current;
+      const playerDisplayPosition = flockAtTable
+        ? tableMeetingPosition(WATTY_TABLE_SLOT_INDEX)
+        : playerPos.current;
       playerRef.current?.setPosition(playerDisplayPosition.x, playerDisplayPosition.y);
-      if (playerSleeping) {
-        const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
-        playerRef.current?.setZIndex(Math.round(pod.y * 100));
-      } else if (flockAtTable) {
+      if (flockAtTable) {
         playerRef.current?.setZIndex(tableMeetingZIndex(WATTY_TABLE_SLOT_INDEX));
       } else if (napPod && isBehindNapPod(playerDisplayPosition, napPod)) {
         playerRef.current?.setZIndex(napPodOcclusionZIndex(napPod));
       }
-      playerRef.current?.setScale(
-        roomScaleRef.current *
-          CHARACTER_SCALE_MULTIPLIER *
-          (playerSleeping ? NAP_POD_SLEEP_SCALE : 1)
-      );
-      playerRef.current?.setBob(playerSleeping ? 0 : Math.sin(playerBobPhase.current) * 1.5);
+      playerRef.current?.setScale(roomScaleRef.current * CHARACTER_SCALE_MULTIPLIER);
+      playerRef.current?.setBob(Math.sin(playerBobPhase.current) * 1.5);
       playerRef.current?.setFacing(
-        playerSleeping
-          ? false
-          : flockAtTable
-            ? tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).direction
-            : coffeePhase && coffeePhase !== "approaching"
-              ? "rear-left"
-              : playerDirection.current
+        flockAtTable
+          ? tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).direction
+          : coffeePhase && coffeePhase !== "approaching"
+            ? "rear-left"
+            : playerDirection.current
       );
       let meetingArrivalComplete =
         !flockWalkingToSeats ||
@@ -1060,8 +1044,13 @@ export function GameCanvas() {
 
         const handle = npcHandlesRef.current.get(agent.id);
         handle?.setPosition(runtime.pos.x, runtime.pos.y);
-        if (agentSeatedAtTable) handle?.setZIndex(tableMeetingZIndex(tableSlotIndex));
-        else if (portfolioNapActive) {
+        // Rear flock members use standing poses because there are only three
+        // physical stools, but they still belong to the table formation and
+        // must be occluded by the tabletop. Do not tie meeting depth to the
+        // seated-pose flag.
+        if (flockAtTable || agentSeatedAtTable) {
+          handle?.setZIndex(tableMeetingZIndex(tableSlotIndex));
+        } else if (portfolioNapActive) {
           const pod = napPod ?? { x: 33.1, y: 91.2, width: 19 };
           handle?.setZIndex(Math.round(pod.y * 100));
         } else if (napPod && isBehindNapPod(runtime.pos, napPod)) {
@@ -1138,7 +1127,7 @@ export function GameCanvas() {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [agentList, officeEvent, flockSeated, flockWalkingToSeats, flockAtTable, playerSleeping, coffeePhase, serverRepairPhase, lunaRoutine, autonomyBeat, collaborationTable, developerSeatPosition, researchSeatPosition, planningBoardPosition, serverRepairPosition, napPod, coffeeNook, coffeeMakerPosition, portfolioSleepingPosition, sleepingPosition, tableMeetingPosition, tableMeetingZIndex]);
+  }, [agentList, officeEvent, flockSeated, flockWalkingToSeats, flockAtTable, coffeePhase, serverRepairPhase, lunaRoutine, autonomyBeat, collaborationTable, developerSeatPosition, researchSeatPosition, planningBoardPosition, serverRepairPosition, napPod, coffeeNook, coffeeMakerPosition, portfolioSleepingPosition, tableMeetingPosition, tableMeetingZIndex]);
 
   const beginPropDrag = (event: React.PointerEvent<HTMLButtonElement>, prop: OfficeProp) => {
     const room = roomRef.current;
@@ -1222,20 +1211,17 @@ export function GameCanvas() {
         ref={playerRef}
         name="Watty"
         speech={
-          playerSleeping
-            ? "Zzz…"
-            : coffeePhase === "approaching"
-              ? "Coffee time!"
-              : coffeePhase === "grinding"
-                ? "Grinding beans…"
-                : coffeePhase === "pouring"
-                  ? "Steady pour…"
-                  : coffeePhase === "sipping"
-                    ? "Ahh, perfect."
-                    : undefined
+          coffeePhase === "approaching"
+            ? "Coffee time!"
+            : coffeePhase === "grinding"
+              ? "Grinding beans…"
+              : coffeePhase === "pouring"
+                ? "Steady pour…"
+                : coffeePhase === "sipping"
+                  ? "Ahh, perfect."
+                  : undefined
         }
-        showStatus={!playerSleeping && !flockAtTable}
-        horizontalScale={playerSleeping ? NAP_POD_SLEEP_HORIZONTAL_SCALE : 1}
+        showStatus={!flockAtTable}
         scaleMultiplier={flockAtTable ? SEATED_SPRITE_SCALE.watty : 1}
         activity={
           coffeePhase === "grinding"
@@ -1246,19 +1232,15 @@ export function GameCanvas() {
                 ? "coffee-sipping"
                 : undefined
         }
-        sprite={
-          playerSleeping
-            ? { type: "static", url: "/sprites/agents/watty-sleeping.png" }
-            : {
-                type: "directional",
-                base: "watty",
-                pose: flockAtTable && tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).pose === "seated"
-                  ? "seated"
-                  : "standing",
-                seatedSpriteUrls: SEATED_NO_STOOL_SPRITES.watty,
-                initialDirection: "front-left",
-              }
-        }
+        sprite={{
+          type: "directional",
+          base: "watty",
+          pose: flockAtTable && tableMeetingSlot(WATTY_TABLE_SLOT_INDEX).pose === "seated"
+            ? "seated"
+            : "standing",
+          seatedSpriteUrls: SEATED_NO_STOOL_SPRITES.watty,
+          initialDirection: "front-left",
+        }}
       />
 
       {OFFICE_PROPS.map((prop) => {
@@ -1350,7 +1332,6 @@ export function GameCanvas() {
                 type="button"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => {
-                  setPlayerSleeping(false);
                   setCoffeePhase(null);
                   const nextSeated = !flockSeated;
                   setFlockSeated(nextSeated);
@@ -1366,23 +1347,6 @@ export function GameCanvas() {
                 {flockSeated ? "Stand flock" : "Seat flock"}
               </button>
             )}
-            {prop.id === "nap-pod" && (
-              <button
-                type="button"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => {
-                  setFlockSeated(false);
-                  setFlockWalkingToSeats(false);
-                  setCoffeePhase(null);
-                  const nextSleeping = !playerSleeping;
-                  setPlayerSleeping(nextSleeping);
-                  if (nextSleeping) setSelectedPropId(null);
-                }}
-                className="ml-1 rounded bg-indigo-500/25 px-2 py-0.5 text-[10px] font-semibold text-indigo-100 hover:bg-indigo-400/35"
-              >
-                {playerSleeping ? "Wake Watty" : "Sleep Watty"}
-              </button>
-            )}
             {prop.id === "coffee-nook" && (
               <button
                 type="button"
@@ -1390,7 +1354,6 @@ export function GameCanvas() {
                 onClick={() => {
                   setFlockSeated(false);
                   setFlockWalkingToSeats(false);
-                  setPlayerSleeping(false);
                   const nextPhase = coffeePhase ? null : "approaching";
                   setCoffeePhase(nextPhase);
                   if (nextPhase) setSelectedPropId(null);

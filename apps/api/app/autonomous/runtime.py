@@ -20,6 +20,7 @@ logger = logging.getLogger("penguinhq.agents.runtime")
 
 API_BASE = os.environ.get("PENGUINHQ_API_BASE", "http://api:8000")
 API_TOKEN = os.environ.get("PENGUINHQ_API_TOKEN", "")
+API_RETRY_SECONDS = 5
 
 
 # Lazy registry — imported here to avoid circular imports at module level.
@@ -67,6 +68,24 @@ class AgentRuntime:
         self._agents: list[BaseAgent] = []
         self._tasks: list[asyncio.Task] = []
 
+    async def _fetch_agent_records(self) -> list[dict]:
+        """Wait for the API instead of permanently exiting during startup races."""
+        assert self._http is not None
+        while True:
+            try:
+                response = await self._http.get(f"{API_BASE}/agents")
+                response.raise_for_status()
+                return response.json()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "API is not ready at %s; retrying in %ss",
+                    API_BASE,
+                    API_RETRY_SECONDS,
+                )
+                await asyncio.sleep(API_RETRY_SECONDS)
+
     async def start(self) -> None:
         """Initialize shared infrastructure and launch all agents."""
         logger.info("PenguinHQ Agent Runtime starting...")
@@ -78,14 +97,10 @@ class AgentRuntime:
         # Shared Anthropic client (reads ANTHROPIC_API_KEY from env)
         self._anthropic = AsyncAnthropic()
 
-        # Fetch all agent records from the API
-        try:
-            resp = await self._http.get(f"{API_BASE}/agents")
-            resp.raise_for_status()
-            agent_records = resp.json()
-        except Exception:
-            logger.exception("failed to fetch agents from API — is the API running?")
-            return
+        # Fetch all agent records from the API. Compose can start this process
+        # before FastAPI is listening, so treat initial connection failures as
+        # expected readiness lag rather than a terminal agent-runtime failure.
+        agent_records = await self._fetch_agent_records()
 
         logger.info("found %d agent records in DB", len(agent_records))
 

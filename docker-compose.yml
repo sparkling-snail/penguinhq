@@ -56,6 +56,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-penguin}:${POSTGRES_PASSWORD:-penguin}@postgres:5432/${POSTGRES_DB:-penguinhq}
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:3000
+      ALLOWED_HOSTS: api,localhost,127.0.0.1,testserver
     volumes:
       - ./apps/api:/app
     ports:

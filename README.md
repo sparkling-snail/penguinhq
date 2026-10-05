@@ -10,9 +10,39 @@
 
 Under the hood it is a real distributed-ish system: a FastAPI backend, a separate agent-runner process with four concurrent `asyncio` agents, PostgreSQL as the task ledger, MCP tool integrations for live data, and a WebSocket event stream that drives a Next.js front end.
 
-**Portfolio walkthrough:** [case study](docs/CASE_STUDY.md) · [architecture](ARCHITECTURE.md) · [safe deployment](docs/DEPLOYMENT.md) · [60-second demo script](docs/DEMO_SCRIPT.md) · [security model](SECURITY.md)
+**Portfolio walkthrough:** [live demo](https://penguinhq.vercel.app/) · [case study](docs/CASE_STUDY.md) · [architecture](ARCHITECTURE.md) · [safe deployment](docs/DEPLOYMENT.md) · [60-second demo script](docs/DEMO_SCRIPT.md) · [security model](SECURITY.md)
 
 > The public build is a deterministic, read-only showcase. The live agent backend remains private and is protected with service authentication; see [Current limitations](#current-limitations) for the boundary between service auth and full user auth.
+
+## Demo
+
+**[Open PenguinHQ →](https://penguinhq.vercel.app/)**
+
+> **Work in progress:** The screenshots below come from the full stack running locally on `localhost`. The Vercel deployment is currently a deterministic, read-only portfolio showcase; the live autonomous-agent backend is not hosted publicly yet.
+
+![PenguinHQ live office with autonomous agents and Leetcode Coach conversation](docs/images/live-agent-office.jpg)
+
+*The private runtime projects real agent state into the office: Job Hunter searches and evaluates listings while Leetcode Coach handles a live practice conversation.*
+
+![PenguinHQ autonomous agents following role-specific office routines](docs/images/autonomous-agent-routines.jpg)
+
+*Live state also drives spatial routines: Tech Scout works at the planning area, Portfolio Penguin recharges in the nap pod, and Job Hunter diagnoses the build server while the shared job conversation continues.*
+
+![PenguinHQ Job Hunter returning a verified LinkedIn listing through Apify](docs/images/job-hunter-apify-results.jpg)
+
+*Job Hunter runs a live LinkedIn search through Apify, returns a verified listing card, and enforces a durable daily quota. Portfolio Penguin clarifies the application intent in the same shared channel.*
+
+![PenguinHQ Tech Scout producing a structured AI research briefing](docs/images/tech-scout-research-briefing.jpg)
+
+*Tech Scout turns a request in `#research` into a structured technology briefing, highlighting the key themes and why they matter while the office continues visualizing every agent's current routine.*
+
+![PenguinHQ agents gathered around the interactive collaboration table](docs/images/collaboration-table-meeting.jpg)
+
+*Interactive furniture can gather the flock for a team meeting. Depth-aware layering places rear attendees behind the tabletop while the three front penguins occupy the visible stools.*
+
+![PenguinHQ Leetcode practice desk showing a persisted attempt and a targeted coaching hint](docs/images/leetcode-coach-hint.jpg)
+
+*The practice desk saves an immutable review attempt, sends it to Leetcode Coach, and returns a focused hint without revealing the full solution. The public Vercel demo remains read-only so visitors cannot mutate private data or incur API costs.*
 
 ## Engineering highlights
 
