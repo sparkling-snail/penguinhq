@@ -8,7 +8,7 @@ export type SpriteDirection = "front-left" | "front-right" | "rear-left" | "rear
 /**
  * A character's art is either:
  *  - "static": one image, flipped horizontally to face left/right (what
- *    the player uses — there's only one penguin-blue.webp).
+ *    single-pose sprites such as the sleeping penguins use).
  *  - "directional": four separate images, one per facing (what the named
  *    agent sprites use — Bluey/Kip/Luna/Ziggy each ship as
  *    `{base}-{direction}.webp`), swapped based on movement direction

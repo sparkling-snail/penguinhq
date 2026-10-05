@@ -7,7 +7,7 @@ import { PigeonTooltip } from "./PigeonTooltip";
 import { useGameStore, type PigeonInFlight } from "@/stores/gameStore";
 import type { Agent, AgentState } from "@/types/agent";
 
-// Room art is a fixed 1470x1070 screenshot (club-penguin-office-open.png) —
+// Room art is a fixed 1470x1070 screenshot (office-background.png) —
 // everything below is a percentage of that box, the same coordinate
 // system Claude-Office uses for its office room, so nothing needs
 // recomputing on resize.
@@ -1214,7 +1214,7 @@ export function GameCanvas() {
       style={{
         aspectRatio: ROOM_ASPECT_RATIO,
         maxHeight: "100%",
-        backgroundImage: "url(/sprites/club-penguin-office-open.png)",
+        backgroundImage: "url(/sprites/office-background.png)",
       }}
     >
       <Character
