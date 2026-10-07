@@ -18,7 +18,7 @@ Under the hood it is a real distributed-ish system: a FastAPI backend, a separat
 
 **[Open PenguinHQ →](https://penguinhq.vercel.app/)**
 
-> **Work in progress:** The screenshots below come from the full stack running locally on `localhost`. The Vercel deployment is currently a deterministic, read-only portfolio showcase; the live autonomous-agent backend is not hosted publicly yet.
+> **Live runtime demonstrations:** These screenshots show the full private runtime, running locally or on the authenticated AWS deployment. The public Vercel demo remains a deterministic, read-only portfolio showcase.
 
 ![PenguinHQ live office with autonomous agents and Leetcode Coach conversation](docs/images/live-agent-office.jpg)
 
@@ -28,9 +28,13 @@ Under the hood it is a real distributed-ish system: a FastAPI backend, a separat
 
 *Live state also drives spatial routines: Tech Scout works at the planning area, Portfolio Penguin recharges in the nap pod, and Job Hunter diagnoses the build server while the shared job conversation continues.*
 
-![PenguinHQ Job Hunter returning a verified LinkedIn listing through Apify](docs/images/job-hunter-apify-results.jpg)
+![PenguinHQ Job Hunter displaying LinkedIn search results from Apify alongside the live office](docs/images/job-hunter-visualisation.png)
 
 *Job Hunter runs a live LinkedIn search through Apify, returns a verified listing card, and enforces a durable daily quota. Portfolio Penguin clarifies the application intent in the same shared channel.*
+
+![PenguinHQ Watty profile form with AI Engineer selected as the target role](docs/images/watty-profile-demonstration.png)
+
+*Watty’s profile gives the flock shared context: name, target roles, preferred location, experience, skills, and goals. The private runtime saves these fields in PostgreSQL and uses them in agent conversations and Job Hunter’s default searches. This demonstration shows the profile form alongside the live office and proximity greetings.*
 
 ![PenguinHQ Tech Scout producing a structured AI research briefing](docs/images/tech-scout-research-briefing.jpg)
 
