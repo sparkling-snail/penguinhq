@@ -1,301 +1,228 @@
-# PenguinHQ Architecture
+# PenguinHQ architecture
 
-This document describes the architecture implemented in the current source tree. PenguinHQ is a local-first AI workspace that represents autonomous agents as penguins in a shared office, exposes their activity through chat and animation, and persists their working state in PostgreSQL.
+This reference describes the authenticated live runtime shown in the [README demonstrations](README.md#demo). The public portfolio is a read-only frontend using demo data. The latest private-runtime application changes are awaiting source publication; see [publication status](README.md) before assuming a published checkout matches every component below.
 
-The system is a development-stage modular monolith split across a browser application, an HTTP/WebSocket API, and one autonomous-agent process.
+PenguinHQ runs a Next.js browser application, a FastAPI service, and one Python agent-runner process. PostgreSQL owns durable state and queued work. Redis carries notifications. The office animation projects agent activity; it is not the execution engine.
 
-## System context
+## System overview
 
-```text
-┌──────────────────────────────┐
-│ Browser                      │
-│ Next.js + React + Zustand    │
-└──────────┬───────────┬───────┘
-           │ REST      │ WebSocket
-           ▼           ▼
-┌──────────────────────────────┐
-│ FastAPI API                  │
-│ routes + persistence +       │
-│ authenticated event fan-out  │
-└──────┬───────────┬───────────┘
-       │           │
-       ▼           ▼
-┌─────────────┐  ┌─────────────┐
-│ PostgreSQL  │  │ Redis       │
-│ durable data│  │ pub/sub     │
-└─────────────┘  └─────────────┘
-       ▲
-       │ HTTP
-┌──────┴───────────────────────┐
-│ Agent runner                 │
-│ four asyncio agent loops     │
-│ + in-process AgentBus        │
-└──────┬───────────────┬───────┘
-       │               │
-       ▼               ▼
-  Anthropic API    External MCP servers
-                   ├── Apify / LinkedIn actor
-                   └── Tavily search
+```mermaid
+flowchart TB
+    User[Office owner] -->|HTTPS and login| Caddy[Caddy reverse proxy]
+    Caddy -->|Pages and assets| Web[Next.js / React]
+    Caddy -->|REST /api and WebSocket /ws| API[FastAPI]
+    API -->|Transactions| PG[(PostgreSQL)]
+    API <-->|Live event pub/sub| Redis[(Redis)]
+    API -->|WebSocket notifications via Caddy| Web
+    Runner[Python agent runner] -->|HTTP: claim and persist| API
+    Runner --> Hunter[Job Hunter]
+    Runner --> Scout[Tech Scout]
+    Runner --> Coach[Leetcode Coach]
+    Runner --> Portfolio[Portfolio Penguin]
+    Hunter --> Apify[Apify MCP / LinkedIn]
+    Scout --> Tavily[Tavily MCP]
+    Runner -->|Shared model client| Claude[Anthropic API]
+    Hooks[Optional Claude Code hooks] -->|Authenticated HTTP| API
 ```
 
-There are five Docker Compose services:
+The worker does **not** connect directly to PostgreSQL or consume a Redis work queue. It polls HTTP task endpoints, and the API performs the database transactions. Workers also do not depend on WebSocket subscriptions for task delivery.
 
-| Service | Responsibility | Exposed port |
-| --- | --- | ---: |
-| `web` | Next.js UI, chat, practice desk, and office renderer | 3000 |
-| `api` | REST API, WebSocket endpoint, database access, and event fan-out | 8000 |
-| `agent-runner` | Runs all autonomous agents in one Python process | None |
-| `postgres` | Durable application state | 5432 |
-| `redis` | Readiness plus cross-replica WebSocket event pub/sub | 6379 |
-
-The API and agent runner share the same Python image and source tree but have separate process lifecycles. The agent runner communicates with the API over its public HTTP and WebSocket interfaces rather than importing API route logic directly.
-
-## Backend structure
-
-```text
-apps/api/app/
-├── main.py                     # app construction, middleware, startup
-├── core/
-│   ├── config.py               # API settings
-│   ├── database.py             # async SQLAlchemy engine and sessions
-│   └── redis.py                # Redis connection and readiness check
-├── domain/
-│   ├── models/                 # SQLAlchemy persistence models
-│   └── schemas/                # Pydantic request, response, and event types
-├── api/routes/                 # HTTP and WebSocket transport layer
-├── autonomous/
-│   ├── base.py                 # shared agent lifecycle and integrations
-│   ├── bus.py                  # in-process task router
-│   ├── runtime.py              # discovery, construction, supervision
-│   └── agents/                 # four specialized agents
-└── ws/connection_manager.py    # local sockets + Redis pub/sub fan-out
-```
-
-FastAPI's lifespan initializes tables only when the development-only `AUTO_CREATE_SCHEMA` setting is enabled, then seeds the four agents if the `agents` table is empty. Production runs the Alembic migration history before API startup and sets `AUTO_CREATE_SCHEMA=false`.
-
-## Autonomous-agent runtime
-
-`python -m app.autonomous` starts `AgentRuntime`. The runtime:
-
-1. Creates one shared `httpx.AsyncClient`, `AsyncAnthropic`, and `AgentBus`.
-2. Fetches agent records from `GET /agents`.
-3. Matches each persisted role against a lazy Python class registry.
-4. Instantiates each matching `BaseAgent` subclass.
-5. Starts every agent as an independent `asyncio.Task`.
-6. Restarts an agent loop if its top-level task exits.
-
-The registered agents are:
-
-| Class | Role | Cycle | Primary behavior |
-| --- | --- | ---: | --- |
-| `JobHunterAgent` | `job_hunter` | 180 seconds | Collect and persist LinkedIn jobs, evaluate fit, dispatch leads. |
-| `LeetcodeCoachAgent` | `leetcode_coach` | 86,400 seconds | Publish a daily practice problem and review user attempts. |
-| `TechScoutAgent` | `tech_scout` | 86,400 seconds | Run budgeted Tavily searches and publish a daily brief. |
-| `PortfolioPenguinAgent` | `portfolio` | 300 seconds | Process job leads and summarize the application pipeline. |
-
-### Agent loop priority
-
-Every agent registers an `asyncio.Queue` inbox with `AgentBus` and starts a WebSocket listener for human chat. Its main loop prioritizes work in this order:
-
-```text
-human chat
-    ▼
-inter-agent inbox task
-    ▼
-wait for cycle interval
-    ▼
-autonomous cycle
-```
-
-Queues are checked periodically during the interval so chat and tasks can interrupt the wait. A failure inside a cycle is logged, followed by a ten-second delay before retrying the loop.
-
-### Shared agent services
-
-`BaseAgent` provides:
-
-- State changes through `POST /agents/{id}/state`.
-- Chat broadcasts through `POST /chat/send`.
-- Durable recent memory through `/agents/{id}/memory`.
-- Per-agent structured facts through `/agents/{id}/facts`.
-- Anthropic message creation and public error sanitization.
-- WebSocket chat listening and channel filtering.
-- Task dispatch through the API and `AgentBus`.
-- Task completion through `PATCH /tasks/{id}`.
-
-Agent state is persisted before the API broadcasts `agent.state_changed`. The UI therefore uses the database-backed agent representation as the source of truth for work state.
-
-### Human chat routing
-
-Browser messages arrive as `chat.message` WebSocket events. Every agent maintains its own WebSocket connection and ignores:
-
-- Messages authored by itself.
-- Messages authored by any registered agent.
-- Messages outside its configured channel and `human`.
-- Direct-channel messages explicitly addressed to a different role.
-
-An untagged message in `human` is visible to all agents. A message such as `@tech_scout research inference runtimes` wakes only Tech Scout. The shared `jobs` channel is consumed by Job Hunter and Portfolio Penguin, with role-specific filtering to reduce duplicate responses.
-
-The default conversational path loads recent memory and durable facts, calls Anthropic, broadcasts and persists the reply, then performs a second LLM call to extract only the fact keys declared by the agent's fixed schema.
-
-## Agent integrations
-
-### Job Hunter and Apify
-
-Job Hunter connects to the configured Apify streamable HTTP MCP endpoint, discovers the LinkedIn actor tool, invokes it with search criteria, and normalizes actor output into `JobListing` records. It:
-
-- Uses saved target role and location facts when available.
-- Filters descriptions that clearly require more than the configured experience limit.
-- Extracts a small fixed set of recognizable skills.
-- Upserts listings by `(source, source_job_id)`.
-- Tracks a daily listing quota in its fact store.
-- Evaluates one autonomous result with Anthropic and sends sufficiently strong leads to Portfolio Penguin.
-
-Direct messages to Job Hunter execute the real collection path rather than asking an LLM to claim that it searched. Requests to show today's saved listings read PostgreSQL without spending collection quota.
-
-### Tech Scout and Tavily
-
-Tech Scout connects to Tavily's MCP endpoint and selects a basic search tool. It deliberately avoids crawling and advanced research tools. Before executing searches, it reserves the day's requested credits in its fact store, then supplies returned research to Anthropic for synthesis.
-
-The daily code-side quota limits operational usage but is not a provider billing limit.
-
-### Leetcode practice
-
-Leetcode Coach publishes daily challenges, answers questions, and reviews user code. The practice desk persists a mutable session draft separately from immutable submitted attempts. When a message contains a practice-attempt marker, the coach's resulting review is also stored as `AttemptFeedback`.
-
-### Portfolio processing
-
-Portfolio Penguin receives `job_lead` tasks. High-fit leads trigger a cover-letter outline; other leads are logged. Its autonomous cycle summarizes recent memory as the current application pipeline.
-
-## Inter-agent tasks and pigeon events
-
-The intended task flow is:
-
-```text
-source agent
-  │
-  ├── POST /tasks ──► PostgreSQL task row
-  │                      │
-  │                      └── pigeon.dispatched ──► browser
-  │
-  └── AgentBus queue ──► destination agent
-                              │
-                              └── PATCH /tasks/{id}
-                                      │
-                                      └── pigeon.delivered ──► browser
-```
-
-The API resolves `destination_role` to a persisted agent, creates a task with `pending` status, and broadcasts a pigeon payload. The receiving agent processes the matching `AgentMessage` from its in-process queue and attempts to mark the task `completed`.
-
-This design separates the durable task ledger from low-latency delivery, but it currently has two important limitations:
-
-1. `AgentBus` queues exist only in the agent-runner process. Pending database tasks are not reclaimed after a restart.
-2. There are no worker leases or idempotent task claims yet, so a future durable worker will need explicit retry and dead-letter semantics.
-
-## API surface
-
-| Area | Principal endpoints | Purpose |
+| Component | Responsibility | Live network exposure |
 | --- | --- | --- |
-| Health | `GET /health`, `GET /health/ready` | Liveness and PostgreSQL/Redis readiness |
-| Agents | `GET /agents`, `POST /agents/{id}/state` | Roster and live work state |
-| Memory | `GET/POST /agents/{id}/memory` | Recent chronological conversation/activity context |
-| Facts | `GET/POST /agents/{id}/facts` | Per-agent durable key/value profile |
-| Chat | `POST /chat/send` | Server-originated chat broadcast |
-| Jobs | `POST /jobs/ingest`, `GET /jobs` | Idempotent job ingestion and listing history |
-| Tasks | `POST/GET /tasks`, `PATCH /tasks/{id}` | Inter-agent task ledger |
-| Practice | `/practice/sessions`, drafts, attempts, feedback | Durable coding practice workflow |
-| Hooks | `POST /hooks/event` | Map external coding-tool activity to agent state |
-| WebSocket | `/ws/{client_id}` | Real-time chat and server event fan-out |
+| `caddy` | TLS, office login, reverse proxy, server-side service-token injection | HTTP/HTTPS |
+| `web` | Office, chat, profile editor, and practice desk | Internal port 3000, behind Caddy |
+| `api` | Authentication, validation, persistence, work ownership, event fan-out | Internal port 8000, behind Caddy |
+| `agent-runner` | Execute queued work for four agent roles | No inbound port |
+| `postgres` | Messages, memory, profile, listings, practice, tasks, checkpoints | Internal port 5432, persistent volume |
+| `redis` | Cross-process live notifications | Internal port 6379 |
 
-In production, every non-health HTTP route requires the configured bearer service token. WebSocket clients can observe events, but publishing chat requires the same token. This authenticates trusted processes; it is not end-user identity or row-level authorization. The recommended public deployment therefore exposes only the read-only demo frontend and keeps the API on an internal network.
+The API and worker use the same Python image with separate commands and lifecycles. Development Compose publishes local service ports and mounts source files; it is a different exposure model from the private live deployment.
 
-## Real-time event model
+## A request from message to reply
 
-Every outbound WebSocket message uses an envelope:
-
-```json
-{
-  "type": "agent.state_changed",
-  "payload": {},
-  "timestamp": "2026-08-24T00:00:00Z"
-}
+```mermaid
+sequenceDiagram
+    actor Owner
+    participant UI as Browser
+    participant API as FastAPI
+    participant DB as PostgreSQL
+    participant Worker as Agent runner
+    participant Provider as Model or MCP tool
+    participant Events as Redis / WebSocket
+    Owner->>UI: Send message
+    UI->>API: POST /chat/send with stable UUID
+    API->>DB: Transaction: chat + recipient memory + tasks
+    DB-->>API: Commit
+    API-->>UI: Saved message
+    API->>Events: Publish notification after commit
+    Worker->>API: POST /tasks/claim for role
+    API->>DB: Lock ready work, assign renewable lease
+    API-->>Worker: Task and lease token
+    Worker->>API: Read profile and conversation context
+    opt Model or tool needed
+        Worker->>Provider: Execute request
+        Provider-->>Worker: Result
+        Worker->>API: Save checkpoint
+    end
+    Worker->>API: Save reply and assistant memory
+    API->>DB: Commit reply
+    API->>Events: Publish saved reply
+    Events-->>UI: Merge message and update office
+    Worker->>API: Complete task with lease token
+    API->>DB: Mark completed
 ```
 
-Supported event types are:
+A successful message response means the chat and its recipient deliveries committed together. Retrying the same UUID cannot create another delivery; reusing it with a conflicting payload returns HTTP 409. A legacy WebSocket chat-send path uses the same persistence function, but HTTP is the primary browser send path.
 
-| Event | Producer | Frontend effect |
-| --- | --- | --- |
-| `connection.ack` | WebSocket route | Confirms the caller-supplied client ID |
-| `chat.message` | Browser socket or `POST /chat/send` | Adds a message and may show agent speech |
-| `agent.state_changed` | State and hook routes | Upserts the agent and updates office behavior |
-| `pigeon.dispatched` | Task creation | Adds a pigeon flight |
-| `pigeon.delivered` | Task completion | Removes the matching pigeon |
-| `agent.moved` | Reserved in the schema | No primary producer in the current backend |
+Notifications can be missed. The browser merges messages by ID and reloads history on reconnection and periodically, so Redis or socket interruption does not erase committed conversations.
 
-`ConnectionManager` stores sockets local to each API process and removes dead connections during fan-out. Broadcasts publish to a Redis channel; every API replica subscribes and forwards each event to its own sockets. Development falls back to local broadcast when Redis is unavailable.
+## Agent execution and routing
 
-Chat broadcasts are ephemeral. Browser chat is fanned out but not stored as a chat transcript. Agent memory is persisted separately when an autonomous agent handles or emits a message.
+`AgentRuntime` creates shared HTTP and model clients, loads persisted agent records, constructs the matching subclasses, and starts an `asyncio` loop for each role. A semaphore limits concurrent work across roles; capacity is acquired **before** claiming a task. The budget deployment allows one active task at a time.
 
-## Persistence model
+| Agent | Role | Optional cycle interval | External capability |
+| --- | --- | --- | --- |
+| Job Hunter | `job_hunter` | 180 seconds | Apify LinkedIn collection and fit evaluation |
+| Tech Scout | `tech_scout` | 86,400 seconds | Tavily research and briefing synthesis |
+| Leetcode Coach | `leetcode_coach` | 86,400 seconds | Model-based practice and review |
+| Portfolio Penguin | `portfolio` | 300 seconds | Lead review, application outlines, pipeline summaries |
 
-| Table | Purpose |
+Scheduled cycles are disabled by default with `AUTONOMOUS_CYCLES_ENABLED=false`. When enabled, the runtime creates low-priority tasks keyed by agent and time bucket. Previously queued work survives downtime; missed scheduled ticks are not backfilled. API-level claim ordering uses task priority, then creation time and ID. Human deliveries are high priority, while inter-agent task priority is supplied by its sender.
+
+### Channel routing
+
+| Channel | Default recipients |
 | --- | --- |
-| `agents` | Agent identity, role, state, room, position, and avatar color |
-| `agent_memory` | Append-only user/assistant context per agent |
-| `agent_facts` | Upserted key/value facts keyed by agent and fact name |
-| `job_listings` | Deduplicated external job records and first/last seen timestamps |
-| `tasks` | Task source, destination, type, priority, status, payload, and result |
-| `practice_sessions` | Local user's current practice problem and mutable code draft |
-| `practice_attempts` | Immutable code snapshots submitted for review |
-| `attempt_feedback` | Persisted coach feedback for an attempt |
+| `jobs` | Job Hunter and Portfolio Penguin |
+| `research` | Tech Scout |
+| `leetcode` | Leetcode Coach |
+| `human` | All four roles |
 
-Facts are deliberately agent-scoped. Job Hunter and Portfolio Penguin can declare the same candidate fields but do not automatically share their learned values.
+An initial `@role` mention narrows the channel's recipient set. The API creates durable deliveries only for human-authored messages. Agent replies and proximity greetings are saved as assistant messages without recursively queuing more agent work.
 
-There are few database-level foreign keys outside the practice tables. Agent memory, facts, and tasks rely mostly on application-level identity consistency.
+### Conversation versus tool execution
 
-## Frontend architecture
+- Profile questions such as “What is my profile?” return saved fields directly, without a model or scraper call.
+- Job Hunter requires an explicit search request, such as “find jobs” or “search for SRE roles.” Generic searches use the profile's target role; explicit keywords override that default. Greetings, bare role names, and ordinary questions stay conversational.
+- Requests for today's collected listings read saved jobs without spending search quota.
+- Other conversations combine current profile data, recent turns, older relevant turns, summaries, and per-agent facts before calling the model.
+- Fact extraction records only fields declared in the agent's schema. User-edited profile fields remain separate from inferred facts.
 
-The frontend uses Next.js App Router and a DOM/CSS office renderer:
+Job Hunter normalizes and deduplicates Apify results and applies configured experience filters. Tech Scout reserves a daily research allowance before Tavily calls. These are operational safeguards; they do not replace provider billing limits.
 
-- React Query fetches server data such as the agent roster and practice session.
-- `useWebSocket` is the single adapter from backend events into client state.
-- `gameStore` holds agents, selected agent, pigeon flights, speech, and office preferences.
-- `chatStore` holds channels and the current in-memory chat transcript.
-- `GameCanvas` drives character position and animation with local refs and `requestAnimationFrame` to avoid React state updates on every frame.
-- Agent state selects work animation, speech, and visual treatment; cosmetic routines keep idle agents moving around the office.
-- Furniture layout and office display preferences use browser-local storage.
+## Durable queue and recovery
 
-The frontend mirrors Python event types in TypeScript. `packages/shared-types` documents cross-language contracts, but the applications do not yet consume one generated schema, so contract changes require manual synchronization.
+The API locks the destination agent and ready task with `FOR UPDATE SKIP LOCKED`, creates a random lease token, and commits a **90-second lease**. The worker renews it every **20 seconds**. At most one task per role has a live lease; model and tool calls happen outside database transactions.
 
-## External coding-session hooks
+| Situation | Behavior |
+| --- | --- |
+| Worker completes | Acknowledge only after handler writes succeed. |
+| Transient handler failure | Return to pending with bounded exponential backoff, up to the attempt limit. |
+| Worker dies | Expired lease becomes reclaimable. |
+| Final attempt expires or fails | Preserve task as `failed`; allow explicit operator retry. |
+| Old worker attempts a protected write | Reject an expired or superseded lease token. |
+| Lost mutation response | Retry with stable IDs or idempotency keys. |
+| Retry after saved model/tool result | Reuse the checkpoint where the handler supports it. |
 
-`hooks/agent-tracker.sh` can post coding-tool events to `/hooks/event`. The API maps tool names to visual states such as `coding`, `debugging`, or `researching`, assigns a session to an agent, persists the state, and broadcasts it.
+The default attempt limit is five. Failed tasks are inspectable with `GET /tasks?status=failed` and can be retried explicitly through `POST /tasks/{id}/retry`.
 
-Autonomous roles are excluded from the normal round-robin so hook-driven changes do not compete with their own agent-runner state updates. If no non-autonomous agents exist, the route falls back to the full roster, which can reintroduce that collision.
+Execution is **at least once**. A provider call can succeed immediately before the worker crashes without saving its checkpoint; the retry may call the provider again. Future external writes need provider idempotency or reconciliation. Checkpoints use operation labels and order, so incompatible handler changes require draining work or workflow versioning.
 
-Session-to-agent assignments are stored in API-process memory and reset when the API restarts.
+Inter-agent tasks use the same queue. Task creation publishes `pigeon.dispatched`; completion publishes `pigeon.delivered`. The flight animation is a notification of work, not its delivery mechanism.
 
-## Configuration and deployment assumptions
+## Persistence and memory
 
-- Docker Compose is the supported development topology.
-- The frontend calls browser-reachable `localhost` API and WebSocket URLs.
-- The agent runner calls the API using Docker-network service names.
-- API settings use `pydantic-settings`; autonomous integrations also read environment variables directly.
-- Source directories are bind-mounted for local hot reload.
-- PostgreSQL and Redis publish host ports and use development defaults unless `.env` overrides them.
-- The production Compose topology keeps data/API services private and publishes the read-only demo through Caddy with TLS and security headers.
-- Production has service authentication, but no end-user identity, per-user authorization, rate limiter, or external secret manager.
+| Table | Durable responsibility |
+| --- | --- |
+| `agents` | Identity, role, state, room, position, avatar |
+| `chat_messages` | Channel transcript, stable message ID, trace ID |
+| `user_profiles` | User-edited shared Watty profile for this office owner |
+| `agent_memory` | Full user/assistant turns scoped to agent and conversation |
+| `agent_facts` | Inferred structured facts and operational counters per agent |
+| `memory_summaries` | Rolling context summaries with a through-message marker |
+| `tasks` | Delivery, priority, attempts, lease, result, trace context |
+| `task_checkpoints` | Saved operation results for retries |
+| `job_listings` | Deduplicated external listings and seen timestamps |
+| `practice_sessions` | Editable problem/code draft |
+| `practice_attempts` | Immutable submitted code snapshot |
+| `attempt_feedback` | Persisted coach review |
 
-## Reliability and scaling boundaries
+Context retrieval combines the recent 16 turns, up to four older full-text matches, a rolling summary, and facts. Summarization does not delete raw turns. Legacy memory remains available in its legacy scope. Queued messages may share newer context; this is not a snapshot-isolated replay of an old conversation.
 
-The current architecture intentionally favors a simple single-host experience. Before exposing the interactive backend to untrusted users, the main boundaries to address are:
+The profile contains name, target role, location, experience, skills, and goals. All four agents read it; non-empty user-edited fields override conflicting inferred preferences. Clearing a profile field does not delete historical conversation or per-agent facts.
 
-- Add end-user authentication, authorization, abuse prevention, and rate limits.
-- Replace or augment the in-memory bus with restart-safe task claiming.
-- Move quotas into atomic counters rather than fact-store read/modify/write operations.
-- Add stronger relational constraints where application-level identity is currently trusted.
-- Separate conversation memory from autonomous activity history.
-- Add structured telemetry for cycles, external calls, task latency, tokens, and cost.
-- Generate or validate shared frontend/backend contracts.
-- Add database-backed integration tests and browser end-to-end tests.
+Alembic migrations own schema changes. Live containers migrate before starting the API; `create_all` is only a development convenience and cannot upgrade existing tables. Legacy unversioned databases require backup and explicit adoption. Retaining the PostgreSQL volume protects against container replacement, but a separate backup is needed for disk or host loss.
 
-These are explicit constraints of the current implementation, not capabilities supplied implicitly by PostgreSQL or Redis.
+## API and events
+
+| Area | Endpoints |
+| --- | --- |
+| Health | `GET /health`, `GET /health/ready` |
+| Agents | `GET /agents`, `POST /agents/{id}/state` |
+| Shared profile | `GET /profile`, `PUT /profile` |
+| Chat | `POST /chat/send`, `GET /chat/messages` with pagination |
+| Context | `/agents/{id}/memory`, `/facts`, `/context`, `/summary` |
+| Jobs | `POST /jobs/ingest`, `GET /jobs` |
+| Work | `/tasks`, `/tasks/claim`, `/tasks/{id}/heartbeat`, `/complete`, `/fail`, `/retry`, `/checkpoints/{key}` |
+| Practice | `/practice/sessions`, drafts, attempts, feedback |
+| Coding hooks | `POST /hooks/event` |
+| Live updates | `/ws/{client_id}` |
+
+WebSocket envelopes contain `type`, `payload`, and `timestamp`. Principal events are `connection.ack`, `chat.message`, `agent.state_changed`, `pigeon.dispatched`, and `pigeon.delivered`. `agent.moved` is reserved in the schema rather than the source of routine walking animation.
+
+Each API process keeps its own socket connections. Redis pub/sub distributes events across API processes, which forward them to their local clients. A process-local development fallback does not provide cross-replica delivery. Durable history repairs missed chat notifications.
+
+## Frontend and office simulation
+
+The frontend uses Next.js App Router, React Query for server reads, and Zustand for client state:
+
+- `useWebSocket` translates live events into roster, chat, speech, and pigeon updates.
+- `chatStore` merges persisted history and notifications by message ID.
+- `gameStore` holds agent representations and office UI preferences.
+- `GameCanvas` advances movement through refs and `requestAnimationFrame`; character transforms update without a React render every frame.
+- Furniture footprints share a coordinate system with characters. Swept checks and sliding constrain manual movement; cached A* routes guide automatic movement.
+- Feet and furniture floor anchors determine drawing order. Interaction approach points permit docking into a specific seat or pod; unrelated furniture remains solid.
+- A proximity greeting is a canned assistant message with per-agent and global cooldowns. It is persisted through the chat API without model work.
+
+The renderer uses DOM/CSS, not a physics engine or canvas. Furniture layout and display preferences remain browser-local. Agent work state comes from the backend, but cosmetic routines and character coordinates are client-side. Penguins do not collide with one another, and overlapping custom furniture can make a destination unreachable.
+
+The profile editor saves to the API, so its data is not limited to browser storage. Python and TypeScript event definitions still require manual synchronization.
+
+## Tracing and diagnostics
+
+OpenTelemetry starts a trace at request ingestion, stores propagation context on tasks, and continues it in agent execution. Spans cover persistence/routing, task dispatch, memory retrieval, model/tool operations, and instrumented HTTP calls. Replies carry a trace ID that the chat UI can copy; structured logs also include trace IDs.
+
+An OTLP exporter is optional. Without an exporter, correlation remains available in saved work and logs, but there is no automatically hosted trace viewer. The budget deployment does not run a dedicated tracing backend.
+
+Instrumentation avoids recording prompt/message bodies or authentication headers and strips sensitive URL parts. It is not a full token/cost accounting or operational dashboard system.
+
+## Deployment and access
+
+**Public portfolio:** builds with `NEXT_PUBLIC_DEMO_MODE=true`. Demo state is sanitized and network mutations are disabled. Visitors do not receive private office data or provider credentials.
+
+**Private live office:** Caddy authenticates the owner over HTTPS. It proxies `/api/*` and `/ws/*` to FastAPI while adding the service bearer token server-side. The browser does not need that token. The API checks service authentication and allowed origins; internal data services are not published directly.
+
+The current live host runs all six services on one Lightsail instance. Its 1 GB budget configuration caps container memory, reduces PostgreSQL buffers, and permits one active agent task across roles. Images are built elsewhere. No managed queue, RDS, load balancer, or separate tracing host is required by this topology.
+
+This is a **single-owner office**, not a multi-user product. Shared login credentials and service tokens do not provide individual identity, row-level authorization, or tenant isolation. Production expansion requires those boundaries plus rate limiting and abuse controls.
+
+The current deployment takes daily local database dumps. A same-host backup is insufficient for disk loss; off-host retention and restore checks remain operational responsibilities. S3 automation is a separate opt-in setup, not an implied running service.
+
+## Optional coding-session bridge
+
+`hooks/agent-tracker.sh` sends Claude Code activity to `/hooks/event`. The API maps tool use to states such as coding, debugging, and researching. The script's short timeout keeps an unavailable office API from blocking the coding session.
+
+Hook session assignments remain in API-process memory. The route prefers non-autonomous agents but can fall back to the full roster if none exist, which may conflict with an autonomous role's state updates.
+
+## Scaling and reliability boundaries
+
+- Preserve volumes and maintain independently stored, tested backups.
+- Introduce user identity and data isolation before supporting multiple owners.
+- Version workflows before replaying old tasks through incompatible handlers.
+- Use provider idempotency for external actions; checkpoints alone cannot ensure exactly-once execution.
+- Harden quota accounting before adding concurrent producers or more replicas.
+- Add stronger relational constraints where identity is currently enforced in application code.
+- Generate shared event contracts and broaden browser integration coverage.
+- Add operational metrics, alerts, and provider cost accounting alongside existing traces.
+
+These are implementation boundaries, not guarantees supplied automatically by PostgreSQL, Redis, or Docker.
