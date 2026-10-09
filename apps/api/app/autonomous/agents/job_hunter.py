@@ -545,6 +545,15 @@ class JobHunterAgent(BaseAgent):
         return terms or [LINKEDIN_KEYWORDS]
 
     @staticmethod
+    def _parse_fit_score(evaluation: str, default: int = 5) -> int:
+        """Read the model's "N/10" rating. Reading only the first digit turned
+        "10/10" into 1, so the strongest leads were never handed off."""
+        match = re.search(r"\b(10|[1-9])\s*/\s*10\b", evaluation) or re.search(
+            r"\b(10|[1-9])\b", evaluation
+        )
+        return int(match.group(1)) if match else default
+
+    @staticmethod
     def _read_daily_quota(value: str | None, today: str) -> dict[str, int | str]:
         try:
             quota = json.loads(value or "{}")
@@ -593,13 +602,7 @@ class JobHunterAgent(BaseAgent):
         if evaluation:
             await self.announce(f"📊 Fit evaluation: {evaluation}")
 
-        fit_score = 5
-        try:
-            digits = [c for c in evaluation if c.isdigit()]
-            if digits:
-                fit_score = int(digits[0])
-        except Exception:
-            pass
+        fit_score = self._parse_fit_score(evaluation)
 
         if fit_score >= 6:
             await self.dispatch_task(

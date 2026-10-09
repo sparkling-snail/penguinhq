@@ -67,3 +67,11 @@ def test_job_items_reads_structured_and_text_results() -> None:
 def test_placeholder_items_are_detected() -> None:
     assert ApifyMcpLinkedInJobCollector._is_placeholder_item({"id": "string", "title": "string"})
     assert not ApifyMcpLinkedInJobCollector._is_placeholder_item({"id": "1", "title": "SRE"})
+
+
+def test_fit_score_parses_two_digit_and_spaced_ratings() -> None:
+    parse = JobHunterAgent._parse_fit_score
+    assert parse("10/10 - excellent match") == 10
+    assert parse("7 / 10 - decent fit") == 7
+    assert parse("Fit: 8/10 because of 5 years of Go") == 8
+    assert parse("no rating given") == 5
